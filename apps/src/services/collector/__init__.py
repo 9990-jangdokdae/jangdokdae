@@ -1,2 +1,0 @@
-"""Collector service package."""
-
