@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 
+from apps.src.config import cofig
 from apps.src.models.DTO import (
     AnalysisPointRecord,
     AnalysisRequest,
@@ -23,10 +25,294 @@ POINT_PRIORITY = {
 }
 
 
+SYSTEM_PROMPT = """너는 금융 뉴스 analyzer다.
+
+목표:
+기사 원문에서 중심 이슈를 식별하고, 다음 단계 콘텐츠 생성에 넘길 구조화된 분석 JSON을 만든다.
+
+중요:
+- 기사 1건당 분석한다.
+- 입력 메타데이터는 힌트로만 사용한다.
+- point와 issue는 원문 근거 문장이 있어야 한다.
+- summary는 summary_points를 바탕으로만 작성한다.
+- summary에 point에 없는 새 사실을 추가하지 마라.
+- 수치가 중요하면 point와 summary 모두에 보존하라.
+- 출력은 반드시 JSON만 반환한다.
+""".strip()
+
+
+SUMMARY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "article_id": {"type": "STRING"},
+        "news_type": {"type": "STRING"},
+        "primary_issue_id": {"type": "STRING"},
+        "issue_candidates": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "issue_id": {"type": "STRING"},
+                    "issue": {"type": "STRING"},
+                    "issue_layer": {
+                        "type": "STRING",
+                        "enum": ["주요 이슈", "직접 촉발 이슈", "시장 해석 이슈", "중장기 전망 이슈"],
+                    },
+                    "issue_type": {
+                        "type": "STRING",
+                        "enum": ["시장반응", "원인", "해석", "전망", "리스크", "성장논리", "핵심수치"],
+                    },
+                    "related_entities": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "supporting_sentences": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "centrality_score": {"type": "INTEGER"},
+                    "market_relevance_score": {"type": "INTEGER"},
+                    "support_strength_score": {"type": "INTEGER"},
+                    "forward_value_score": {"type": "INTEGER"},
+                    "entity_focus_score": {"type": "INTEGER"},
+                    "is_primary": {"type": "BOOLEAN"},
+                },
+                "required": [
+                    "issue_id",
+                    "issue",
+                    "issue_layer",
+                    "issue_type",
+                    "related_entities",
+                    "supporting_sentences",
+                    "centrality_score",
+                    "market_relevance_score",
+                    "support_strength_score",
+                    "forward_value_score",
+                    "entity_focus_score",
+                    "is_primary",
+                ],
+            },
+        },
+        "secondary_issue_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "summary_points": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "point_id": {"type": "STRING"},
+                    "linked_issue_id": {"type": "STRING"},
+                    "point": {"type": "STRING"},
+                    "point_type": {
+                        "type": "STRING",
+                        "enum": ["시장반응", "원인", "리스크", "리스크완화", "성장근거", "전망", "핵심수치"],
+                    },
+                    "summary_role": {"type": "STRING"},
+                    "issue_layer": {
+                        "type": "STRING",
+                        "enum": ["주요 이슈", "직접 촉발 이슈", "시장 해석 이슈", "중장기 전망 이슈"],
+                    },
+                    "key_numbers": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "label": {"type": "STRING"},
+                                "value": {"type": "STRING"},
+                                "entity": {"type": "STRING"},
+                                "time_context": {"type": "STRING"},
+                            },
+                            "required": ["label", "value"],
+                        },
+                    },
+                    "related_entity": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "evidence_sentence": {"type": "STRING"},
+                    "evidence_sentences": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "is_source_grounded": {"type": "BOOLEAN"},
+                },
+                "required": [
+                    "point_id",
+                    "point",
+                    "point_type",
+                    "summary_role",
+                    "related_entity",
+                    "evidence_sentence",
+                    "evidence_sentences",
+                    "is_source_grounded",
+                ],
+            },
+        },
+        "summary": {"type": "STRING"},
+        "coverage_check": {
+            "type": "OBJECT",
+            "properties": {
+                "primary_issue_checked": {"type": "BOOLEAN"},
+                "market_reaction_checked": {"type": "BOOLEAN"},
+                "cause_checked": {"type": "BOOLEAN"},
+                "risk_checked": {"type": "BOOLEAN"},
+                "market_interpretation_checked": {"type": "BOOLEAN"},
+                "growth_or_outlook_checked": {"type": "BOOLEAN"},
+                "outlook_checked": {"type": "BOOLEAN"},
+                "key_numbers_checked": {"type": "BOOLEAN"},
+            },
+            "required": [
+                "primary_issue_checked",
+                "market_reaction_checked",
+                "cause_checked",
+                "risk_checked",
+                "market_interpretation_checked",
+                "growth_or_outlook_checked",
+                "outlook_checked",
+                "key_numbers_checked",
+            ],
+        },
+    },
+    "required": [
+        "article_id",
+        "news_type",
+        "primary_issue_id",
+        "issue_candidates",
+        "secondary_issue_ids",
+        "summary_points",
+        "summary",
+        "coverage_check",
+    ],
+}
+
+
 class IssueBasedAnalyzerService:
     """범용 기사 입력을 issue-centered analysis 결과로 변환하는 analyzer."""
 
     def analyze(self, article: AnalysisRequest) -> AnalysisResponse:
+        try:
+            return self._analyze_with_gemini(article)
+        except Exception as exc:
+            result = self._analyze_with_rules(article)
+            debug = dict(result.debug)
+            debug.update(
+                {
+                    "backend": "rules_fallback",
+                    "gemini_error": str(exc),
+                }
+            )
+            return result.model_copy(update={"debug": debug})
+
+    def _analyze_with_gemini(self, article: AnalysisRequest) -> AnalysisResponse:
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError("google-genai 패키지가 필요합니다.") from exc
+
+        if cofig.GEMINI_USE_VERTEX:
+            if not cofig.GOOGLE_CLOUD_PROJECT:
+                raise RuntimeError("GOOGLE_CLOUD_PROJECT 환경변수가 필요합니다.")
+            client = genai.Client(
+                vertexai=True,
+                project=cofig.GOOGLE_CLOUD_PROJECT,
+                location=cofig.GOOGLE_CLOUD_LOCATION,
+            )
+            model_name = cofig.VERTEX_MODEL
+            backend = "gemini-vertex"
+        else:
+            if not cofig.GEMINI_API_KEY:
+                raise RuntimeError("GEMINI_API_KEY 환경변수가 필요합니다.")
+            client = genai.Client(api_key=cofig.GEMINI_API_KEY)
+            model_name = cofig.GEMINI_MODEL
+            backend = "gemini-api"
+
+        response = client.models.generate_content(
+            model=model_name,
+            contents=self._build_prompt(article),
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": SUMMARY_SCHEMA,
+            },
+        )
+        payload = json.loads(response.text)
+        result = AnalysisResponse.model_validate(payload)
+        debug = dict(result.debug)
+        debug.update(
+            {
+                "analyzer": self.__class__.__name__,
+                "backend": backend,
+                "summary_hint_count": len(article.summary_hint),
+                "metadata_hint_count": len(article.metadata.company_names)
+                + len(article.metadata.sectors)
+                + len(article.metadata.keywords),
+            }
+        )
+        return result.model_copy(update={"debug": debug})
+
+    def _build_prompt(self, article: AnalysisRequest) -> str:
+        metadata_payload = {
+            "summary_hint": article.summary_hint,
+            "company_names": article.metadata.company_names,
+            "sectors": article.metadata.sectors,
+            "keywords": article.metadata.keywords,
+        }
+        return f"""{SYSTEM_PROMPT}
+
+출력 형식:
+{{
+  "article_id": "{article.article_id}",
+  "news_type": "주가 급등락 뉴스 / 실적 뉴스 / 정책·규제 뉴스 / 섹터/테마 뉴스 등",
+  "issue_candidates": [
+    {{
+      "issue_id": "issue_001",
+      "issue": "기사에서 뽑아낸 이슈 후보 문장",
+      "issue_layer": "주요 이슈 / 직접 촉발 이슈 / 시장 해석 이슈 / 중장기 전망 이슈",
+      "issue_type": "시장반응 / 원인 / 해석 / 전망 / 리스크 / 성장논리 / 핵심수치",
+      "related_entities": ["기업명", "섹터명", "키워드"],
+      "supporting_sentences": ["원문 문장 1", "원문 문장 2"],
+      "centrality_score": 5,
+      "market_relevance_score": 5,
+      "support_strength_score": 5,
+      "forward_value_score": 5,
+      "entity_focus_score": 5,
+      "is_primary": true
+    }}
+  ],
+  "primary_issue_id": "issue_001",
+  "secondary_issue_ids": ["issue_002", "issue_003"],
+  "summary_points": [
+    {{
+      "point_id": "point_001",
+      "linked_issue_id": "issue_001",
+      "point": "요약문에 들어갈 핵심 포인트",
+      "point_type": "시장반응 / 원인 / 리스크 / 리스크완화 / 성장근거 / 전망 / 핵심수치",
+      "summary_role": "핵심 현상 / 하락 원인 / 상승 논리 / 주의 요인 / 중장기 전망",
+      "issue_layer": "주요 이슈 / 직접 촉발 이슈 / 시장 해석 이슈 / 중장기 전망 이슈",
+      "key_numbers": [
+        {{
+          "label": "주가 상승률",
+          "value": "2.59%",
+          "entity": "삼성전자",
+          "time_context": "장중"
+        }}
+      ],
+      "related_entity": ["기업명", "섹터명", "키워드"],
+      "evidence_sentence": "기사 원문 근거 문장",
+      "evidence_sentences": ["기사 원문 근거 문장 1", "기사 원문 근거 문장 2"],
+      "is_source_grounded": true
+    }}
+  ],
+  "summary": "summary_points를 바탕으로 재구성한 종합 요약문",
+  "coverage_check": {{
+    "primary_issue_checked": true,
+    "market_reaction_checked": true,
+    "cause_checked": true,
+    "risk_checked": true,
+    "market_interpretation_checked": true,
+    "growth_or_outlook_checked": true,
+    "outlook_checked": true,
+    "key_numbers_checked": true
+  }}
+}}
+
+입력 메타데이터:
+{json.dumps(metadata_payload, ensure_ascii=False, indent=2)}
+
+기사 제목:
+{article.title or ""}
+
+기사 본문:
+{article.content}
+"""
+
+    def _analyze_with_rules(self, article: AnalysisRequest) -> AnalysisResponse:
         sentences = self._split_sentences(article.content)
         news_type = self._classify_news_type(sentences)
         issue_candidates = self._build_issue_candidates(article, sentences)
@@ -57,6 +343,7 @@ class IssueBasedAnalyzerService:
             ),
             debug={
                 "analyzer": self.__class__.__name__,
+                "backend": "rules",
                 "summary_hint_count": len(article.summary_hint),
                 "metadata_hint_count": len(article.metadata.company_names)
                 + len(article.metadata.sectors)
