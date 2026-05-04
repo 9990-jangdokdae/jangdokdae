@@ -1,6 +1,6 @@
 # 🏺 장독대 — 시장 독해를 대신 해드립니다
 
-> 오늘의 시장 이슈를 쉽게 읽고 익히며 주식 시장의 감각을 키워주는 주린이 주식 큐레이션
+> 오늘의 시장 이슈를 쉽게 읽고 익히며 주식 시장의 감각을 키워주는 주린이 주식 큐레이션 웹 서비스 플랫폼
 
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://reactjs.org)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
