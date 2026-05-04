@@ -13,6 +13,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics.pairwise import cosine_similarity
 
 from apps.src.services.preprocessor.news_preprocessor import normalize_news_columns
+from apps.src.config import pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +21,14 @@ logger = logging.getLogger(__name__)
 def cluster_news_embeddings(
     df: pd.DataFrame,
     embeddings: np.ndarray,
-    distance_threshold: float = 0.35,
+    distance_threshold: float = pipeline_config.CLUSTER_DISTANCE_THRESHOLD,
 ) -> pd.DataFrame:
     """embedding 배열을 기준으로 cluster_id를 부여하고 대표기사 순위를 계산합니다.
 
     distance_threshold가 낮을수록 더 엄격하게 묶이고, 높을수록 더 큰 클러스터가
     만들어집니다. 현재 기본값 0.35는 노트북 POC에서 사용한 값입니다.
     """
-    out = normalize_news_columns(df).copy()
+    out = normalize_news_columns(df).copy().reset_index(drop=True)
     logger.info("[cluster] fitting agglomerative rows=%s threshold=%s", len(out), distance_threshold)
     clustering_model = AgglomerativeClustering(
         n_clusters=None,
@@ -81,9 +82,9 @@ def select_representative_articles(df: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_top_clusters(
     df: pd.DataFrame,
-    top_n_clusters: int = 5,
-    top_k_articles: int = 5,
-    min_cluster_size: int = 2,
+    top_n_clusters: int = pipeline_config.CLUSTER_TOP_N_CLUSTERS,
+    top_k_articles: int = pipeline_config.CLUSTER_TOP_K_ARTICLES,
+    min_cluster_size: int = pipeline_config.CLUSTER_MIN_SIZE,
 ) -> pd.DataFrame:
     """상위 클러스터의 대표/주요 기사 목록만 요약 DataFrame으로 반환합니다."""
     valid = (
@@ -118,9 +119,9 @@ def summarize_top_clusters(
 
 def get_top_cluster_articles(
     df: pd.DataFrame,
-    top_n_clusters: int = 5,
-    top_k_articles: int = 5,
-    min_cluster_size: int = 2,
+    top_n_clusters: int = pipeline_config.CLUSTER_TOP_N_CLUSTERS,
+    top_k_articles: int = pipeline_config.CLUSTER_TOP_K_ARTICLES,
+    min_cluster_size: int = pipeline_config.CLUSTER_MIN_SIZE,
 ) -> pd.DataFrame:
     """클러스터 크기 기준 상위 N개에서 각 클러스터별 상위 K개 기사만 가져옵니다."""
     top_cluster_ids = (

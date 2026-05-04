@@ -12,6 +12,10 @@
 import logging
 import os
 from datetime import datetime
+
+# pykrx custom module requires KRX_PW, but the environment uses KRX_PASSWORD
+if "KRX_PW" not in os.environ and "KRX_PASSWORD" in os.environ:
+    os.environ["KRX_PW"] = os.environ["KRX_PASSWORD"]
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -30,10 +34,12 @@ def patch_pykrx_session() -> None:
     from pykrx.website.comm import webio
 
     def _session_post_read(self, **params):
-        return _session.post(self.url, headers=self.headers, data=params)
+        resp = _session.post(self.url, headers=self.headers, data=params, timeout=15)
+        return resp
 
     def _session_get_read(self, **params):
-        return _session.get(self.url, headers=self.headers, params=params)
+        resp = _session.get(self.url, headers=self.headers, params=params, timeout=15)
+        return resp
 
     webio.Post.read = _session_post_read
     webio.Get.read = _session_get_read
@@ -42,7 +48,7 @@ def patch_pykrx_session() -> None:
 def login_krx(login_id: str | None = None, login_pw: str | None = None) -> bool:
     """KRX data.krx.co.kr에 로그인하고 공유 세션 쿠키를 갱신합니다."""
     login_id = login_id or os.getenv("KRX_ID")
-    login_pw = login_pw or os.getenv("KRX_PASSWORD") or os.getenv("KRX_PW")
+    login_pw = login_pw or os.getenv("KRX_PASSWORD")
     if not login_id or not login_pw:
         logger.warning("[krx-master] KRX_ID/KRX_PASSWORD or KRX_PW not set; skip login")
         return False
@@ -71,13 +77,21 @@ def login_krx(login_id: str | None = None, login_pw: str | None = None) -> bool:
     headers = {"User-Agent": user_agent, "Referer": login_page}
 
     resp = _session.post(login_url, data=payload, headers=headers, timeout=15)
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.error("[krx-master] login response not JSON status=%s body=%s", resp.status_code, resp.text[:1000])
+        return False
     error_code = data.get("_error_code", "")
 
     if error_code == "CD011":
         payload["skipDup"] = "Y"
         resp = _session.post(login_url, data=payload, headers=headers, timeout=15)
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            logger.error("[krx-master] login (skipDup) response not JSON status=%s body=%s", resp.status_code, resp.text[:1000])
+            return False
         error_code = data.get("_error_code", "")
 
     ok = error_code == "CD001"
@@ -92,12 +106,6 @@ def fetch_krx_master(
 ) -> pd.DataFrame:
     """pykrx로 KRX 종목 마스터를 조회합니다."""
     from pykrx import stock
-
-    if login:
-        if not login_krx():
-            patch_pykrx_session()
-    else:
-        patch_pykrx_session()
 
     query_date = date or datetime.today().strftime("%Y%m%d")
     query_date = query_date.replace("-", "")

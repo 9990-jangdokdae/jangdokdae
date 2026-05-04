@@ -174,14 +174,20 @@ def extract_metadata_from_news(
         body = row.get("news_content", "")
         url = row.get("news_url")
         news_id = row.get("news_id")
-        logger.info("[metadata] extracting %s/%s title=%s", idx + 1, total, str(title)[:80])
-
         try:
             metadata = extract_news_metadata_with_llm(
                 title=title,
                 body=body,
                 client=client,
                 model=model,
+            )
+            logger.info(
+                "[metadata] extracted %s/%s title=%s | sector=%s | company=%s",
+                idx + 1,
+                total,
+                str(title)[:40],
+                metadata.get("primary_sector", ""),
+                metadata.get("company", []),
             )
             rows.append({
                 "idx": idx,
@@ -193,6 +199,7 @@ def extract_metadata_from_news(
                 "error": None,
             })
         except Exception as exc:
+            logger.error("[metadata] failed %s/%s title=%s error=%s", idx + 1, total, str(title)[:40], exc)
             rows.append({
                 "idx": idx,
                 "news_id": news_id,

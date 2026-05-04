@@ -13,7 +13,7 @@ APP_DIR = PROJECT_ROOT / "apps"
 DATA_DIR = APP_DIR / "data"
 
 # 노트북 POC에서 사용하던 기본 수집일입니다. 운영에서는 CLI 인자로 바꿔 실행할 수 있습니다.
-DEFAULT_NEWS_DATE = "2026-04-28"
+DEFAULT_NEWS_DATE = "2026-04-30"
 DEFAULT_PAGE_LIMIT = 20
 
 # OpenAI API 기본 모델명입니다. CLI 옵션으로 교체 가능합니다.
@@ -80,3 +80,10 @@ MACRO_TICKERS = {
     "US_10Y_YIELD": "^TNX",
     "DOLLAR_INDEX": "DX-Y.NYB",
 }
+
+
+# 뉴스 클러스터링 하이퍼파라미터
+CLUSTER_DISTANCE_THRESHOLD = 0.35
+CLUSTER_TOP_N_CLUSTERS = 3
+CLUSTER_TOP_K_ARTICLES = 3
+CLUSTER_MIN_SIZE = 2

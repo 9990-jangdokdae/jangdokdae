@@ -13,6 +13,10 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import pandas as pd
 from openai import OpenAI
 
@@ -29,6 +33,9 @@ from apps.src.config.pipeline_config import (
     NEWS_ARTICLES_PATH,
     NEWS_METADATA_KOSPI_PATH,
     NEWS_WITH_METADATA_PATH,
+    CLUSTER_DISTANCE_THRESHOLD,
+    CLUSTER_TOP_N_CLUSTERS,
+    CLUSTER_TOP_K_ARTICLES,
 )
 from apps.src.services.collector.company_master_collector import build_and_save_company_masters
 from apps.src.services.collector.dart_collector import create_dart_client
@@ -294,15 +301,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--embedding-model", default="text-embedding-3-small")
     p.add_argument("--embedding-batch-size", type=int, default=50)
     p.add_argument("--embedding-max-text-chars", type=int, default=3000)
-    p.add_argument("--distance-threshold", type=float, default=0.35)
+    p.add_argument("--distance-threshold", type=float, default=CLUSTER_DISTANCE_THRESHOLD)
     p.set_defaults(func=cluster)
 
     p = sub.add_parser("build-payload")
     p.add_argument("--input", default=NEWS_METADATA_KOSPI_PATH.parent / "news_clustered.pkl")
     p.add_argument("--kospi-master", default=KOSPI_MASTER_PATH)
     p.add_argument("--output", default=CLUSTER_PAYLOAD_PATH)
-    p.add_argument("--top-n-clusters", type=int, default=5)
-    p.add_argument("--top-k-articles", type=int, default=5)
+    p.add_argument("--top-n-clusters", type=int, default=CLUSTER_TOP_N_CLUSTERS)
+    p.add_argument("--top-k-articles", type=int, default=CLUSTER_TOP_K_ARTICLES)
     p.add_argument("--fs-year", type=int, default=2025)
     p.add_argument("--market-days", type=int, default=5)
     p.add_argument("--macro-period", default="7d")
@@ -329,10 +336,10 @@ def run_pipeline_from_code() -> None:
     RUN_COLLECT_ARTICLES = False
     RUN_EXTRACT_METADATA = False
     RUN_FILTER_KOSPI = False
-    RUN_CLUSTER = False
+    RUN_CLUSTER = True
     RUN_BUILD_PAYLOAD = True
 
-    NEWS_DATE = "2026-04-28"
+    NEWS_DATE = "2026-04-30"
     MASTER_DATE = None  # 예: "20260430". None이면 오늘 날짜 기준.
     CLUSTERED_OUTPUT = NEWS_METADATA_KOSPI_PATH.parent / "news_clustered.pkl"
     SECTOR = '반도체'  # 특정 섹터만 클러스터링하려면 예: "반도체"
@@ -389,7 +396,7 @@ def run_pipeline_from_code() -> None:
             embedding_model="text-embedding-3-small",
             embedding_batch_size=20,
             embedding_max_text_chars=1500,
-            distance_threshold=0.35,
+            distance_threshold=CLUSTER_DISTANCE_THRESHOLD,
         ))
 
     if RUN_BUILD_PAYLOAD:
@@ -397,8 +404,8 @@ def run_pipeline_from_code() -> None:
             input=CLUSTERED_OUTPUT,
             kospi_master=KOSPI_MASTER_PATH,
             output=CLUSTER_PAYLOAD_PATH,
-            top_n_clusters=5,
-            top_k_articles=5,
+            top_n_clusters=CLUSTER_TOP_N_CLUSTERS,
+            top_k_articles=CLUSTER_TOP_K_ARTICLES,
             fs_year=2025,
             market_days=5,
             macro_period="7d",
