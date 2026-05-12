@@ -1,71 +1,53 @@
-"""News preprocessing and standard column normalization."""
+"""뉴스 본문 전처리 모듈."""
 
-import hashlib
+import logging
 import re
 
-import pandas as pd
+from apps.src.utils.list_utils import unique_by
 
-NEWS_COLUMN_RENAME_MAP = {
-    "title": "news_title",
-    "body": "news_content",
-    "article": "news_content",
-    "url": "news_url",
-    "sectors": "sector",
-    "companies": "company",
-    "keywords": "keyword",
-}
+logger = logging.getLogger(__name__)
 
-
-def clean_news_content(text: str) -> str:
-    """기사 본문에서 분석에 불필요한 메타 문자열과 공백을 정리합니다."""
-    text = text.replace("\n", " ")
-    text = re.sub(r"\S+@\S+", " ", text)
-    text = re.sub(r"\[[^\]]+\]", " ", text)
-    text = re.sub(r"\b\d{4}\.\d{2}\.\d{2}\.\b", " ", text)
-    text = re.sub(r"[가-힣]{2,4}\s?기자\s?=\s?", " ", text)
-    text = text.replace("．", ".")
-    text = re.sub(r"[\"“”‘’]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+# 임베딩 품질 저하를 막기 위해 기사 본문과 무관한 메타 텍스트를 제거한다.
+_LINE_PATTERN = re.compile(r"^(?:▶|발로 뛰는|/\S)")
+_INLINE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\[.*?기자\]"),
+    re.compile(r"\((?:사진|이미지|그래픽|자료)=.*?\)"),
+    re.compile(r"그래픽=\S+"),
+    re.compile(r"\S+@\S+\.\S+"),
+]
 
 
-def normalize_news_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """기존 POC 컬럼명을 표준 뉴스 컬럼명으로 변환합니다."""
-    rename_map = {
-        old: new
-        for old, new in NEWS_COLUMN_RENAME_MAP.items()
-        if old in df.columns and new not in df.columns
-    }
-    return df.rename(columns=rename_map)
+class NewsPreprocessor:
+    """수집된 뉴스 기사 본문을 정제합니다."""
 
+    def preprocess(self, articles: list[dict]) -> list[dict]:
+        """article_id 기준 중복 제거 후 본문을 정제하고 빈 기사를 제거합니다."""
+        before = len(articles)
+        articles = unique_by(articles, key=lambda a: a["article_id"])
 
-def make_news_id(row: pd.Series) -> str:
-    """news_url 기반 SHA-1 news_id를 만들고, URL이 없으면 제목+본문을 사용합니다."""
-    news_url = row.get("news_url")
-    if isinstance(news_url, str) and news_url.strip():
-        key = news_url.strip()
-    else:
-        key = f"{row.get('news_title', '')}|{row.get('news_content', '')}"
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
-    return f"news_{digest}"
+        result = []
+        for article in articles:
+            if not article.get("content"):
+                continue
+            article["content"] = self._clean(article["content"])
+            if article["content"]:
+                result.append(article)
 
+        logger.info(
+            "[preprocess] before=%d after=%d removed=%d",
+            before, len(result), before - len(result),
+        )
+        return result
 
-def ensure_news_id(df: pd.DataFrame) -> pd.DataFrame:
-    """news_id 컬럼이 없으면 생성하고 맨 앞으로 정렬합니다."""
-    out = normalize_news_columns(df.copy())
-    if "news_id" not in out.columns:
-        out.insert(0, "news_id", out.apply(make_news_id, axis=1))
-    else:
-        cols = ["news_id"] + [col for col in out.columns if col != "news_id"]
-        out = out[cols]
-    return out
-
-
-def preprocess_news_articles(df: pd.DataFrame, body_col: str = "news_content") -> pd.DataFrame:
-    """기사 DataFrame 컬럼과 본문을 표준화하고 news_id를 보장합니다."""
-    out = normalize_news_columns(df.copy())
-    if body_col in out.columns:
-        out[body_col] = out[body_col].fillna("").astype(str).apply(clean_news_content)
-    return ensure_news_id(out)
-
-
-preprocess_news = clean_news_content
+    def _clean(self, text: str) -> str:
+        """기자명·이메일·이미지 캡션 등 노이즈 텍스트를 제거하고 정제된 본문을 반환합니다."""
+        lines = []
+        for line in text.splitlines():
+            if _LINE_PATTERN.search(line):
+                continue
+            for pattern in _INLINE_PATTERNS:
+                line = pattern.sub("", line)
+            line = line.strip()
+            if line:
+                lines.append(line)
+        return "\n".join(lines)

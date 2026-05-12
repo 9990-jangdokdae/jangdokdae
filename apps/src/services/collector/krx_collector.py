@@ -1,88 +1,65 @@
-"""pyKRX market data collection."""
+"""pyKRX 시장 데이터 수집."""
 
 import logging
+import os
 from datetime import datetime, timedelta
-from typing import Any
 
-from apps.src.services.utils import dataframe_to_records, retry_call
-from apps.src.services.collector.company_master_collector import fetch_krx_master, login_krx
+from pykrx import stock
+
+from apps.src.exceptions.company_exceptions import KRXDataError
+from apps.src.utils.json_utils import dataframe_to_records
 
 logger = logging.getLogger(__name__)
 
 
-def fetch_stock_market_data(
-    krx_code: str,
-    start_date: str,
-    end_date: str,
-    login: bool = True,
-) -> dict[str, list[dict[str, Any]]]:
-    """KRX 종목코드 기준으로 OHLCV와 투자자별 거래량을 조회합니다."""
-    from pykrx import stock
+def _date_range(days: int, end_date: str) -> tuple[str, str]:
+    """end_date 기준으로 days 거래일을 커버하는 (start, end) 날짜 문자열 쌍을 반환합니다.
 
-    if login:
-        login_krx()
-
-    start_date = start_date.replace("-", "")
-    end_date = end_date.replace("-", "")
-    logger.info("[krx] ohlcv/trading krx_code=%s start=%s end=%s", krx_code, start_date, end_date)
-    ohlcv = retry_call(stock.get_market_ohlcv, start_date, end_date, krx_code)
-    trading_volume = retry_call(
-        stock.get_market_trading_volume_by_date,
-        start_date,
-        end_date,
-        krx_code,
-    )
-
-    result = {
-        "ohlcv": dataframe_to_records(ohlcv.reset_index()),
-        "trading_volume_by_investor": dataframe_to_records(trading_volume.reset_index()),
-    }
-    logger.info(
-        "[krx] done krx_code=%s ohlcv_rows=%s trading_rows=%s",
-        krx_code,
-        len(result["ohlcv"]),
-        len(result["trading_volume_by_investor"]),
-    )
-    return result
+    영업일 기준 days를 확보하기 위해 달력일 기준 days * 2로 넉넉히 조회 범위를 잡습니다.
+    """
+    end = datetime.strptime(end_date, "%Y%m%d")
+    start = end - timedelta(days=days * 2)
+    return start.strftime("%Y%m%d"), end_date
 
 
-def fetch_stock_ohlcv(krx_code: str, start_date: str, end_date: str):
-    """KRX 종목 OHLCV raw DataFrame을 조회합니다."""
-    from pykrx import stock
-
-    return retry_call(
-        stock.get_market_ohlcv,
-        start_date.replace("-", ""),
-        end_date.replace("-", ""),
-        krx_code,
-    )
+def _trim_and_convert(df, days: int) -> list[dict]:
+    """DataFrame 꼬리 days 행만 남기고, 날짜 내림차순 정렬 후 JSON 직렬화 가능한 records로 반환합니다."""
+    df = df.tail(days).sort_index(ascending=False).reset_index()
+    df.columns = ["date" if c == "날짜" else c for c in df.columns]
+    return dataframe_to_records(df)
 
 
-def fetch_trading_volume_by_investor(krx_code: str, start_date: str, end_date: str, login: bool = True):
-    """KRX 종목 투자자별 거래량 raw DataFrame을 조회합니다."""
-    from pykrx import stock
+def fetch_ohlcv(krx_code: str, days: int = 60, end_date: str | None = None) -> list[dict]:
+    """OHLCV를 최근 days 거래일 기준으로 수집합니다. 날짜 내림차순."""
+    end_date = end_date or datetime.now().strftime("%Y%m%d")
+    start, end = _date_range(days, end_date)
+    try:
+        df = stock.get_market_ohlcv(start, end, krx_code)
+        if df is None or df.empty:
+            raise KRXDataError(f"OHLCV empty krx_code={krx_code}")
+        return _trim_and_convert(df, days)
+    except KRXDataError:
+        raise
+    except Exception as exc:
+        raise KRXDataError(f"OHLCV fetch failed krx_code={krx_code}") from exc
 
-    if login:
-        login_krx()
 
-    return retry_call(
-        stock.get_market_trading_volume_by_date,
-        start_date.replace("-", ""),
-        end_date.replace("-", ""),
-        krx_code,
-    )
+def fetch_investor_trading(krx_code: str, days: int = 60, end_date: str | None = None) -> list[dict]:
+    """투자자별 거래량을 최근 days 거래일 기준으로 수집합니다. 날짜 내림차순.
 
-
-def fetch_recent_stock_market_data(
-    krx_code: str,
-    days: int = 5,
-    end_date: str | None = None,
-) -> dict[str, list[dict[str, Any]]]:
-    """종료일 기준 최근 N일의 KRX 시장 데이터를 조회합니다."""
-    end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
-    start = end - timedelta(days=days)
-    return fetch_stock_market_data(
-        krx_code=krx_code,
-        start_date=start.strftime("%Y-%m-%d"),
-        end_date=end.strftime("%Y-%m-%d"),
-    )
+    KRX 로그인 자격증명이 없으면 빈 리스트를 반환합니다.
+    """
+    if not (os.environ.get("KRX_ID") and os.environ.get("KRX_PASSWORD")):
+        logger.debug("[krx] KRX_ID/KRX_PASSWORD 미설정 — investor_trading 수집 건너뜀")
+        return []
+    end_date = end_date or datetime.now().strftime("%Y%m%d")
+    start, end = _date_range(days, end_date)
+    try:
+        df = stock.get_market_trading_volume_by_investor(start, end, krx_code)
+        if df is None or df.empty:
+            raise KRXDataError(f"investor trading empty krx_code={krx_code}")
+        return _trim_and_convert(df, days)
+    except KRXDataError:
+        raise
+    except Exception as exc:
+        raise KRXDataError(f"investor trading fetch failed krx_code={krx_code}") from exc

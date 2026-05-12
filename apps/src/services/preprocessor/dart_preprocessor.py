@@ -1,264 +1,163 @@
-"""DART document and financial statement preprocessing."""
+"""DART 사업보고서 XML 파싱 및 재무제표 정규화 모듈."""
 
 import html
+import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
-from apps.src.config.pipeline_config import TARGET_ACCOUNTS
-from apps.src.services.utils import dataframe_to_records
+from apps.src.config.dart_accounts import TARGET_ACCOUNTS
+from apps.src.utils.json_utils import dataframe_to_records, to_json_safe
 
-TARGET_MAJOR_TITLES = {
-    "II. 사업의 내용": "business",
-    "IV. 이사의 경영진단 및 분석의견": "director_analysis",
-    "V. 회계감사인의 감사의견 등": "audit_opinion",
+logger = logging.getLogger(__name__)
+
+# 추출 대상 대분류 섹션 (로마 숫자 TITLE 기준)
+_TARGET_SECTIONS = {
+    "II. 사업의 내용": "II_business",
+    "IV. 이사의 경영진단 및 분석의견": "IV_director_analysis",
+    "V. 회계감사인의 감사의견 등": "V_audit_opinion",
 }
 
-def extract_major_titles(xml_text: str) -> List[Dict[str, int | str]]:
-    """
-    로마숫자(I., II., III. ...)로 시작하는 대분류 TITLE 목록 추출
-    """
-    title_pattern = re.compile(r"<TITLE[^>]*>(.*?)</TITLE>", re.IGNORECASE | re.DOTALL)
-    roman_heading_pattern = re.compile(r"^\s*[IVXLCDM]+\.\s+.+$", re.IGNORECASE)
-
-    matches = list(title_pattern.finditer(xml_text))
-    major_candidates = []
-    for match in matches:
-        title_text = re.sub(r"\s+", " ", match.group(1)).strip()
-        if roman_heading_pattern.match(title_text):
-            major_candidates.append({"title_text": title_text, "start": match.start()})
-
-    major_titles = []
-    for i, item in enumerate(major_candidates):
-        start = int(item["start"])
-        end = (
-            int(major_candidates[i + 1]["start"])
-            if i + 1 < len(major_candidates)
-            else len(xml_text)
-        )
-        major_titles.append(
-            {
-                "title_text": str(item["title_text"]),
-                "start": start,
-                "end": end,
-            }
-        )
-    return major_titles
+_NOISE_PATTERNS = [
+    re.compile(r"^☞"),
+    re.compile(r"^※\s*상세"),
+    re.compile(r"\.jpg$|\.png$|\.jpeg$"),
+    re.compile(r"^본문 위치로 이동$"),
+]
 
 
-def extract_target_major_sections(
-    xml_text: str, targets: Dict[str, str] = TARGET_MAJOR_TITLES
-) -> Dict[str, str]:
-    """
-    원하는 대분류 섹션만 XML 원문으로 추출
-    """
-    major_titles = extract_major_titles(xml_text)
-    by_title = {m["title_text"]: xml_text[m["start"] : m["end"]] for m in major_titles}
-    return {alias: by_title.get(title, "") for title, alias in targets.items()}
+def _extract_major_sections(xml_text: str) -> dict[str, str]:
+    """로마 숫자 대분류 TITLE 기준으로 XML을 섹션별로 분리합니다."""
+    title_pat = re.compile(r"<TITLE[^>]*>(.*?)</TITLE>", re.IGNORECASE | re.DOTALL)
+    roman_pat = re.compile(r"^\s*[IVXLCDM]+\.\s+.+$", re.IGNORECASE)
+
+    matches = list(title_pat.finditer(xml_text))
+    candidates = []
+    for m in matches:
+        text = re.sub(r"\s+", " ", m.group(1)).strip()
+        if roman_pat.match(text):
+            candidates.append({"title": text, "start": m.start()})
+
+    sections: dict[str, str] = {}
+    for i, item in enumerate(candidates):
+        end = candidates[i + 1]["start"] if i + 1 < len(candidates) else len(xml_text)
+        sections[item["title"]] = xml_text[item["start"]:end]
+    return sections
 
 
-def _xml_to_lines(section_xml: str) -> List[str]:
-    """
-    XML 문자열을 줄 단위 텍스트로 정규화:
-    - 문단/테이블/행 단위 종료 태그를 줄바꿈으로 치환
-    - 모든 태그 제거
-    - 공백 정리
-    """
-    text = re.sub(
-        r"</(P|TR|TBODY|TABLE|SECTION-[0-9]+|TITLE)>",
-        "\n",
-        section_xml,
-        flags=re.IGNORECASE,
-    )
+def _xml_to_lines(section_xml: str) -> list[str]:
+    """XML 섹션을 정제된 줄 목록으로 변환합니다."""
+    text = re.sub(r"</(P|TR|TBODY|TABLE|SECTION-\d+|TITLE)>", "\n", section_xml, flags=re.IGNORECASE)
     text = re.sub(r"<(PGBRK|BR)\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
-
-    text = re.sub(r"[\t\r\f\v]+", " ", text)
-    text = re.sub(r"\u00a0", " ", text)
+    text = re.sub(r"[\t\r\f\v ]+", " ", text)
     text = re.sub(r"\n\s+", "\n", text)
-    text = re.sub(r"[ ]{2,}", " ", text)
-
-    lines = [ln.strip() for ln in text.split("\n")]
-    return [ln for ln in lines if ln]
+    text = re.sub(r" {2,}", " ", text)
+    return [ln.strip() for ln in text.split("\n") if ln.strip()]
 
 
-def _drop_common_noise(lines: List[str]) -> List[str]:
+def _drop_noise(lines: list[str]) -> list[str]:
+    """_NOISE_PATTERNS에 매칭되는 줄을 제거합니다."""
+    return [ln for ln in lines if not any(p.search(ln) for p in _NOISE_PATTERNS)]
+
+
+def _base_lines(xml: str) -> list[str]:
+    """XML을 줄 목록으로 변환한 뒤 노이즈 줄을 제거합니다."""
+    return _drop_noise(_xml_to_lines(xml))
+
+
+def _preprocess_business(xml: str) -> str:
+    """사업의 내용 섹션 XML에서 숫자·기호만 있는 줄을 제거하고 본문 텍스트를 반환합니다."""
+    lines = _base_lines(xml)
+    return "\n".join(ln for ln in lines if not re.fullmatch(r"[\d\W_]+", ln) and len(ln) >= 2)
+
+
+def _preprocess_director_analysis(xml: str) -> str:
+    """이사의 경영진단 섹션 XML에서 불필요한 공백을 제거하고 2자 이상 줄만 반환합니다."""
+    lines = _base_lines(xml)
+    return "\n".join(re.sub(r"\s{2,}", " ", ln).strip() for ln in lines if len(ln) >= 2)
+
+
+def _preprocess_audit_opinion(xml: str) -> str:
+    """감사의견 섹션 XML에서 감사 관련 핵심 키워드가 포함된 줄만 선별해 반환합니다."""
+    lines = _base_lines(xml)
+    keep_kw = re.compile(r"감사의견|회계법인|감사인|적정|한정|부적정|의견거절|내부회계|검토결론|감사기간|지정감사")
+    selected = [ln for ln in lines if keep_kw.search(ln)]
+    return "\n".join(selected if len(selected) >= 20 else lines)
+
+
+def preprocess_dart_sections(xml_text: str) -> dict[str, str]:
+    """사업보고서 XML에서 3개 대분류 섹션을 추출·정제합니다.
+
+    Returns:
+        {"II_business": ..., "IV_director_analysis": ..., "V_audit_opinion": ...}
     """
-    공통 노이즈 제거:
-    - 참조 링크(☞ ...)
-    - 상세표 안내
-    - 이미지 파일명
-    """
-    noise_patterns = [
-        r"^☞",
-        r"^※\s*상세",
-        r"\.jpg$|\.png$|\.jpeg$",
-        r"^본문 위치로 이동$",
-    ]
-    compiled = [re.compile(p) for p in noise_patterns]
+    raw_sections = _extract_major_sections(xml_text)
+    result: dict[str, str] = {}
 
-    cleaned = []
-    for line in lines:
-        if any(p.search(line) for p in compiled):
-            continue
-        cleaned.append(line)
-    return cleaned
-
-
-def preprocess_business_section(section_xml: str) -> str:
-    """
-    II. 사업의 내용 전처리:
-    - 문장형 텍스트 중심으로 정리
-    - 숫자/기호만 있는 라인 제거
-    """
-    lines = _drop_common_noise(_xml_to_lines(section_xml))
-
-    out = []
-    for line in lines:
-        if re.fullmatch(r"[\d\W_]+", line):
-            continue
-        if len(line) < 2:
-            continue
-        out.append(line)
-    return "\n".join(out)
-
-
-def preprocess_director_analysis_section(section_xml: str) -> str:
-    """
-    IV. 이사의 경영진단 및 분석의견 전처리:
-    - 문장형 내용 최대 보존
-    """
-    lines = _drop_common_noise(_xml_to_lines(section_xml))
-
-    out = []
-    for line in lines:
-        line = re.sub(r"\s{2,}", " ", line).strip()
-        if len(line) < 2:
-            continue
-        out.append(line)
-    return "\n".join(out)
-
-
-def preprocess_audit_opinion_section(section_xml: str) -> str:
-    """
-    V. 회계감사인의 감사의견 등 전처리:
-    - 감사 관련 키워드 중심으로 선별
-    - 선별 결과가 너무 적으면 전체 라인 반환
-    """
-    lines = _drop_common_noise(_xml_to_lines(section_xml))
-
-    keep_kw = re.compile(
-        r"감사의견|회계법인|감사인|적정|한정|부적정|의견거절|내부회계|검토결론|감사대상|감사기간|지정감사"
-    )
-    selected = [line for line in lines if keep_kw.search(line)]
-
-    if len(selected) < 20:
-        selected = lines
-    return "\n".join(selected)
-
-
-def preprocess_dart_sections(xml_text: str, targets: Dict[str, str] = TARGET_MAJOR_TITLES) -> Dict[str, str]:
-    """
-    전체 XML에서 지정한 3개 대분류를 추출 + 섹션별 전처리 수행
-    """
-    sections = extract_target_major_sections(xml_text)
-    return {
-        "II_business": preprocess_business_section(sections["business"]),
-        "IV_director_analysis": preprocess_director_analysis_section(
-            sections["director_analysis"]
-        ),
-        "V_audit_opinion": preprocess_audit_opinion_section(sections["audit_opinion"]),
+    preprocessors = {
+        "II. 사업의 내용": ("II_business", _preprocess_business),
+        "IV. 이사의 경영진단 및 분석의견": ("IV_director_analysis", _preprocess_director_analysis),
+        "V. 회계감사인의 감사의견 등": ("V_audit_opinion", _preprocess_audit_opinion),
     }
+    for title, (key, fn) in preprocessors.items():
+        xml = raw_sections.get(title, "")
+        result[key] = fn(xml) if xml else ""
+
+    return result
 
 
 def _clean_amount(value: Any) -> float | None:
-    """DART 금액 문자열의 쉼표/괄호/결측값을 숫자로 변환합니다."""
-    if value is None or pd.isna(value):
+    """DART 금액 문자열을 숫자로 변환합니다."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     text = str(value).replace(",", "").strip()
     if text in {"", "-", "nan"}:
         return None
     text = text.replace("(", "-").replace(")", "")
-    return pd.to_numeric(text, errors="coerce")
+    result = pd.to_numeric(text, errors="coerce")
+    return None if pd.isna(result) else float(result)
 
 
 def normalize_financial_statements(
-    raw_financial_statements: pd.DataFrame | None,
-    fs_year: int = 2025,
+    df: pd.DataFrame | None,
+    fs_year: int | None = None,
     target_accounts: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """DART 재무제표 wide format을 주요 계정 중심 long records로 변환합니다."""
-    if raw_financial_statements is None or raw_financial_statements.empty:
+    """DART 재무제표를 핵심 계정 중심 long format records로 변환합니다.
+
+    - TARGET_ACCOUNTS 기준으로 계정 필터링
+    - wide(당기·전기·전전기 컬럼) → long(행) 변환
+    - 금액 문자열 → float
+    """
+    if df is None or df.empty:
         return []
 
-    target_accounts = target_accounts or TARGET_ACCOUNTS
-    fs = raw_financial_statements.copy()
-    cols = [
-        "corp_code",
-        "stock_code",
-        "fs_div",
-        "fs_nm",
-        "sj_div",
-        "sj_nm",
-        "account_id",
-        "account_nm",
-        "thstrm_nm",
-        "thstrm_amount",
-        "frmtrm_nm",
-        "frmtrm_amount",
-        "bfefrmtrm_nm",
-        "bfefrmtrm_amount",
-    ]
-    fs = fs[[col for col in cols if col in fs.columns]].copy()
+    from datetime import datetime
+    fs_year = fs_year or (datetime.now().year - 1)
+    target = target_accounts or TARGET_ACCOUNTS
+
+    fs = df.copy()
     if "account_nm" in fs.columns:
-        fs = fs[fs["account_nm"].isin(target_accounts)]
+        fs = fs[fs["account_nm"].isin(target)]
 
     period_specs = [
-        ("당기", "thstrm_nm", "thstrm_amount"),
-        ("전기", "frmtrm_nm", "frmtrm_amount"),
-        ("전전기", "bfefrmtrm_nm", "bfefrmtrm_amount"),
+        ("당기", "thstrm_nm", "thstrm_amount", fs_year),
+        ("전기", "frmtrm_nm", "frmtrm_amount", fs_year - 1),
+        ("전전기", "bfefrmtrm_nm", "bfefrmtrm_amount", fs_year - 2),
     ]
-    period_year_map = {
-        "당기": fs_year,
-        "전기": fs_year - 1,
-        "전전기": fs_year - 2,
-    }
 
     records = []
-    for _, row in fs.iterrows():
-        base = {
-            "corp_code": row.get("corp_code"),
-            "stock_code": row.get("stock_code"),
-            "fs_div": row.get("fs_div"),
-            "fs_nm": row.get("fs_nm"),
-            "sj_div": row.get("sj_div"),
-            "sj_nm": row.get("sj_nm"),
-            "account_id": row.get("account_id"),
-            "account_nm": row.get("account_nm"),
-        }
-
-        for period_type, period_col, amount_col in period_specs:
+    for row in fs.to_dict(orient="records"):
+        base = {k: to_json_safe(row.get(k)) for k in ("corp_code", "stock_code", "fs_div", "fs_nm", "sj_div", "sj_nm", "account_nm")}
+        for period_type, period_col, amount_col, year in period_specs:
             if amount_col not in fs.columns:
                 continue
             amount = _clean_amount(row.get(amount_col))
-            if amount is None or pd.isna(amount):
+            if amount is None:
                 continue
+            records.append({**base, "period_type": period_type, "period_name": to_json_safe(row.get(period_col)), "year": year, "amount": amount, "currency": "KRW"})
 
-            records.append({
-                **base,
-                "period_type": period_type,
-                "period_name": row.get(period_col),
-                "year": period_year_map[period_type],
-                "amount": float(amount),
-                "currency": "KRW",
-            })
-
-    return dataframe_to_records(pd.DataFrame(records))
-
-
-preprocess_target_sections = preprocess_dart_sections
-preprocess_business = preprocess_business_section
-preprocess_director_analysis = preprocess_director_analysis_section
-preprocess_audit_opinion = preprocess_audit_opinion_section
+    return records

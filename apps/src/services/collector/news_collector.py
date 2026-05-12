@@ -1,124 +1,154 @@
-"""네이버 금융 주요뉴스 수집 모듈.
-
-poc.ipynb의 "뉴스기사 수집" 셀을 함수화한 파일입니다.
-흐름은 1) 날짜별 주요뉴스 목록에서 URL 수집, 2) 각 기사 본문 비동기 수집,
-3) news_title/news_content/news_url DataFrame 반환 순서입니다.
-"""
+"""네이버 금융 주요뉴스 수집 모듈."""
 
 import logging
-import asyncio
-import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-import aiohttp
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from apps.src.config.pipeline_config import DEFAULT_NEWS_DATE, DEFAULT_PAGE_LIMIT
+from apps.src.exceptions.collector_exceptions import NewsBodyFetchError
+from apps.src.utils.date_utils import parse_datetime
+from apps.src.utils.http_utils import with_retry
 
 logger = logging.getLogger(__name__)
 
 
-BASE_URL = "https://finance.naver.com/news/mainnews.naver?"
+class NewsCollector:
+    """네이버 금융 주요뉴스 수집기.
 
-
-def parse_link(link: str) -> str:
-    """네이버 금융 목록 URL을 모바일 뉴스 본문 URL로 변환합니다."""
-    article_id = re.findall(r"article_id=(.+?)&", link)[0]
-    office_id = re.findall(r"office_id=(.+?)&", link)[0]
-    return f"https://n.news.naver.com/mnews/article/{office_id}/{article_id}"
-
-
-def collect_news_urls(
-    news_date: str | None = DEFAULT_NEWS_DATE,
-    page_limit: int = DEFAULT_PAGE_LIMIT,
-) -> list[str]:
-    """지정 날짜의 네이버 금융 주요뉴스 URL을 페이지 단위로 수집합니다.
-
-    네이버 금융 목록은 마지막 페이지 이후에도 동일한 첫 기사가 반복될 수 있어서,
-    이전 페이지의 첫 URL과 현재 페이지의 첫 URL이 같으면 수집을 중단합니다.
+    Args:
+        max_pages: 안전 상한 페이지 수.
+        concurrency: 본문 동시 크롤링 수.
+        delay_ms: 페이지 목록 요청 간 딜레이(ms).
     """
-    if news_date is None:
-        news_date = datetime.now().strftime("%Y-%m-%d")
 
-    params = {"date": news_date, "page": 1}
-    previous_first = None
-    news_urls: list[str] = []
+    _LIST_URL = "https://stock.naver.com/api/domestic/news/list"
+    _ARTICLE_URL = "https://n.news.naver.com/mnews/article/{oid}/{aid}"
+    _PAGE_SIZE = 20
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://stock.naver.com",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }
 
-    for page in range(1, page_limit + 1):
-        params["page"] = page + 1
-        logger.info("[news] collect urls page=%s date=%s", page + 1, news_date)
-        resp = requests.get(BASE_URL, params=params, timeout=15)
-        resp.raise_for_status()
+    def __init__(
+        self,
+        max_pages: int = 200,
+        concurrency: int = 5,
+        delay_ms: int = 200,
+    ) -> None:
+        """최대 페이지 수, 동시 크롤링 수, 요청 딜레이를 설정하고 세션을 초기화합니다."""
+        self.max_pages = max_pages
+        self.concurrency = concurrency
+        self.delay_ms = delay_ms
+        self._session = requests.Session()
+        self._session.headers.update(self._HEADERS)
 
-        soup = BeautifulSoup(resp.text, "lxml")
-        urls = [a.get("href") for a in soup.select("dd.articleSubject > a")]
-        page_urls = [parse_link(url) for url in urls if url]
+    def collect(self, date: str | None = None) -> list[dict]:
+        """지정 날짜의 네이버 금융 주요뉴스 전체를 수집합니다.
 
-        if previous_first and page_urls and page_urls[0] == previous_first:
-            logger.info("[news] duplicated first url at page=%s, stop", page + 1)
-            break
+        Args:
+            date: 수집 날짜 (YYYYMMDD). None이면 오늘.
 
-        news_urls.extend(page_urls)
-        logger.info("[news] page=%s urls=%s total=%s", page + 1, len(page_urls), len(news_urls))
-        previous_first = page_urls[0] if page_urls else previous_first
+        Returns:
+            기사 dict 리스트. 각 항목은 article_id, office_id, title, url,
+            press, published_date, content 필드를 가집니다.
+        """
+        date = date or datetime.now().strftime("%Y%m%d")
+        logger.info("[news] start date=%s max_pages=%d concurrency=%d", date, self.max_pages, self.concurrency)
 
-    return news_urls
+        raw_items = self._fetch_all_pages(date)
+        articles = self._build_articles(raw_items)
+        naver_parsed = self._fetch_bodies(articles)
+        total_fetched = len(articles)
+        articles = [a for a in articles if a["content"]]
+        articles.sort(key=lambda a: a["published_date"] or "")
 
+        logger.info("[news] done fetched=%d body_parsed=%d kept=%d", total_fetched, naver_parsed, len(articles))
+        return articles
 
-async def fetch_one_news(session: aiohttp.ClientSession, article_url: str) -> list[str] | None:
-    """기사 URL 하나에서 제목/본문을 가져옵니다.
+    def _fetch_all_pages(self, date: str) -> list[dict]:
+        """빈 페이지가 나올 때까지 목록 API를 순차 호출해 전체 raw 기사 목록을 반환합니다."""
+        raw_items: list[dict] = []
+        for page in range(1, self.max_pages + 1):
+            if page > 1:
+                time.sleep(self.delay_ms / 1000)
+            items = self._fetch_page(date, page)
+            if not items:
+                logger.info("[news] page=%d empty — stopping", page)
+                break
+            raw_items.extend(items)
+            logger.info("[news] page=%d items=%d total=%d", page, len(items), len(raw_items))
+        logger.info("[news] list done total=%d", len(raw_items))
+        return raw_items
 
-    파싱 실패나 요청 실패는 전체 수집을 중단하지 않도록 None으로 반환합니다.
-    """
-    try:
-        async with session.get(article_url) as resp:
-            html = await resp.text()
+    def _fetch_page(self, date: str, page: int) -> list[dict]:
+        """지정 날짜·페이지의 목록 API를 호출하고 articles 배열을 반환합니다."""
+        def _get():
+            """목록 API에 GET 요청을 보내고 JSON 응답을 반환합니다."""
+            resp = self._session.get(
+                self._LIST_URL,
+                params={"category": "mainnews", "date": date, "page": page, "pageSize": self._PAGE_SIZE},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json()
 
-        soup = BeautifulSoup(html, "lxml")
-        title_el = soup.select_one("#title_area > span")
-        article_el = soup.select_one("#dic_area")
+        return with_retry(_get).get("articles", [])
 
-        if title_el is None or article_el is None:
-            return None
+    def _build_articles(self, raw_items: list[dict]) -> list[dict]:
+        """API 응답 raw 항목을 파이프라인 표준 기사 dict 형태로 변환합니다."""
+        articles = []
+        for item in raw_items:
+            oid = str(item.get("officeId") or "")
+            aid = str(item.get("articleId") or "")
+            url = self._ARTICLE_URL.format(oid=oid, aid=aid) if oid and aid else ""
+            articles.append({
+                "article_id": aid,
+                "office_id": oid,
+                "title": item.get("title", ""),
+                "url": url,
+                "press": item.get("officeHname") or "",
+                "published_date": parse_datetime(item.get("datetime")),
+                "content": None,
+            })
+        return articles
 
-        title = title_el.get_text(strip=True)
-        article = article_el.get_text(" ", strip=True)
-        return [title, article, article_url]
-    except Exception as exc:
-        logger.warning("[news] failed url=%s error=%s", article_url, exc)
-        return None
+    def _fetch_bodies(self, articles: list[dict]) -> int:
+        """본문을 병렬로 수집하고 성공 건수를 반환합니다."""
+        count = 0
+        with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+            future_to_idx = {
+                executor.submit(self._fetch_body, art["url"]): i
+                for i, art in enumerate(articles)
+                if art["url"]
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    content = future.result()
+                    articles[idx]["content"] = content
+                    if content is not None:
+                        count += 1
+                except Exception as exc:
+                    err = NewsBodyFetchError(str(exc), article_id=articles[idx]["article_id"])
+                    logger.warning("[news] body failed %s", err)
+        return count
 
+    def _fetch_body(self, url: str) -> str | None:
+        """단일 기사 URL의 본문 텍스트를 BeautifulSoup으로 파싱해 반환합니다."""
+        def _get():
+            """기사 URL에 GET 요청을 보내고 HTML 텍스트를 반환합니다."""
+            resp = self._session.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp.text
 
-async def fetch_all_news_async(
-    news_urls: list[str],
-    concurrency: int = 10,
-) -> pd.DataFrame:
-    """기사 URL 목록을 비동기로 수집해 news_title/news_content/news_url DataFrame으로 반환합니다."""
-    connector = aiohttp.TCPConnector(limit=concurrency)
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
-        tasks = [fetch_one_news(session, article_url) for article_url in news_urls]
-        results = await asyncio.gather(*tasks)
-
-    docs = [row for row in results if row is not None]
-    logger.info("[news] fetched articles success=%s failed=%s", len(docs), len(news_urls) - len(docs))
-    return pd.DataFrame(docs, columns=["news_title", "news_content", "news_url"])
-
-
-def fetch_all_news(news_urls: list[str], concurrency: int = 10) -> pd.DataFrame:
-    """일반 Python 스크립트에서 비동기 기사 수집 함수를 호출하기 위한 래퍼입니다."""
-    return asyncio.run(fetch_all_news_async(news_urls, concurrency=concurrency))
-
-
-def collect_news_articles(
-    news_date: str | None = DEFAULT_NEWS_DATE,
-    page_limit: int = DEFAULT_PAGE_LIMIT,
-    concurrency: int = 10,
-) -> pd.DataFrame:
-    """URL 수집과 본문 수집을 한 번에 실행하는 상위 함수입니다."""
-    news_urls = collect_news_urls(news_date=news_date, page_limit=page_limit)
-    logger.info("[news] collected url count=%s", len(news_urls))
-    return fetch_all_news(news_urls, concurrency=concurrency)
+        soup = BeautifulSoup(with_retry(_get), "lxml")
+        article = soup.select_one("#newsct_article")
+        return article.get_text(separator="\n", strip=True) if article else None

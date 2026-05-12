@@ -1,67 +1,86 @@
-"""News article embedding generation."""
+"""뉴스 기사 임베딩 모듈."""
 
 import logging
+import os
 
 import numpy as np
-import pandas as pd
-from openai import OpenAI
+import torch
+from sentence_transformers import SentenceTransformer
 
-from apps.src.config.pipeline_config import DEFAULT_EMBEDDING_MODEL
-from apps.src.services.preprocessor.news_preprocessor import normalize_news_columns
+from apps.src.exceptions.processing_exceptions import EmbedEncodeError, EmbedModelError
 
 logger = logging.getLogger(__name__)
 
 
-def build_embedding_texts(
-    df: pd.DataFrame,
-    title_col: str = "news_title",
-    body_col: str = "news_content",
-    max_text_chars: int = 3000,
-) -> list[str]:
-    """news_title + news_content를 embedding 입력 텍스트로 구성합니다."""
-    df = normalize_news_columns(df)
-    return (
-        df[title_col].fillna("").astype(str)
-        + " "
-        + df[body_col].fillna("").astype(str)
-    ).str.slice(0, max_text_chars).tolist()
+class NewsEmbedder:
+    """뉴스 기사 임베딩 생성기.
 
+    토큰 제한이 있는 모델을 위해 기사를 청크로 분할하고 평균 풀링합니다.
 
-def embed_news_articles(
-    df: pd.DataFrame,
-    client: OpenAI | None = None,
-    model: str = DEFAULT_EMBEDDING_MODEL,
-    title_col: str = "news_title",
-    body_col: str = "news_content",
-    batch_size: int = 50,
-    max_text_chars: int = 3000,
-) -> np.ndarray:
-    """기사 제목과 본문을 합친 텍스트를 OpenAI embedding 벡터로 변환합니다."""
-    client = client or OpenAI()
-    texts = build_embedding_texts(df, title_col=title_col, body_col=body_col, max_text_chars=max_text_chars)
+    Args:
+        batch_size: 한 번에 인코딩할 청크 수.
+        overlap: 청크 간 겹치는 토큰 수 (문맥 단절 방지).
+    """
 
-    embeddings = []
-    logger.info(
-        "[embedding] start rows=%s model=%s batch_size=%s max_text_chars=%s",
-        len(texts),
-        model,
-        batch_size,
-        max_text_chars,
-    )
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start:start + batch_size]
-        logger.info(
-            "[embedding] request batch_start=%s batch_end=%s batch_size=%s",
-            start,
-            min(start + batch_size, len(texts)),
-            len(batch),
-        )
-        response = client.embeddings.create(input=batch, model=model)
-        embeddings.extend(data.embedding for data in response.data)
-        logger.info("[embedding] progress %s/%s articles", min(start + batch_size, len(texts)), len(texts))
+    def __init__(self, batch_size: int = 32, overlap: int = 20) -> None:
+        """EMBED_MODEL 환경변수의 모델을 로드하고 MPS/CPU 디바이스를 선택합니다."""
+        model_name = os.environ.get("EMBED_MODEL")
+        if not model_name:
+            raise EmbedModelError("EMBED_MODEL environment variable is not set")
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        logger.info("[embed] loading model=%s device=%s", model_name, device)
+        try:
+            self._model = SentenceTransformer(model_name, device=device)
+        except Exception as exc:
+            raise EmbedModelError(f"Failed to load model '{model_name}'", model_name=model_name) from exc
+        self._tokenizer = self._model.tokenizer
+        self._max_len = self._model.max_seq_length - 2  # [CLS], [SEP] 제외
+        self.batch_size = batch_size
+        self.overlap = overlap
 
-    logger.info("[embedding] done rows=%s", len(embeddings))
-    return np.array(embeddings)
+    def embed(self, articles: list[dict]) -> list[dict]:
+        """각 기사에 embedding 필드를 추가해 반환합니다. 입력 순서 보존."""
+        # 모든 기사의 청크를 한 배치로 묶어 인코딩 효율을 높임
+        chunk_index: list[int] = []
+        chunk_texts: list[str] = []
 
+        for i, article in enumerate(articles):
+            text = f"{article['title']} {article['content'] or ''}"
+            for chunk in self._chunk(text):
+                chunk_index.append(i)
+                chunk_texts.append(chunk)
 
-embed_articles = embed_news_articles
+        logger.info("[embed] encoding articles=%d chunks=%d", len(articles), len(chunk_texts))
+        try:
+            chunk_embeddings = self._model.encode(
+                chunk_texts,
+                batch_size=self.batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=True,
+            )
+        except Exception as exc:
+            raise EmbedEncodeError(str(exc), articles_count=len(articles)) from exc
+
+        article_chunks: list[list[np.ndarray]] = [[] for _ in articles]
+        for idx, emb in zip(chunk_index, chunk_embeddings):
+            article_chunks[idx].append(emb)
+
+        for article, chunks in zip(articles, article_chunks):
+            article["embedding"] = np.mean(chunks, axis=0).tolist()
+
+        return articles
+
+    def _chunk(self, text: str) -> list[str]:
+        """텍스트를 모델 최대 토큰 길이 기준으로 겹치는 청크로 분할합니다."""
+        stride = max(1, self._max_len - self.overlap)
+        ids = self._tokenizer.encode(text, add_special_tokens=False)
+        if not ids:
+            return [text]
+
+        chunks = []
+        for start in range(0, len(ids), stride):
+            end = min(start + self._max_len, len(ids))
+            chunks.append(self._tokenizer.decode(ids[start:end], skip_special_tokens=True))
+            if end == len(ids):
+                break
+        return chunks

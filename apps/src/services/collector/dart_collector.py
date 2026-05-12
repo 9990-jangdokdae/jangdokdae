@@ -1,98 +1,69 @@
-"""DART raw data collection.
-
-OpenDartReader client 생성, 공시 목록 조회, 사업보고서 XML 원문 조회,
-재무제표 raw 조회만 담당합니다.
-"""
+"""DART 공시·사업보고서·재무제표 수집."""
 
 import logging
-import os
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
 
-from apps.src.services.utils import retry_call
+import OpenDartReader as ODR
+
+from apps.src.exceptions.company_exceptions import DARTDataError
+from apps.src.services.preprocessor.dart_preprocessor import (
+    normalize_financial_statements,
+    preprocess_dart_sections,
+)
+from apps.src.utils.json_utils import dataframe_to_records
 
 logger = logging.getLogger(__name__)
 
 
-def create_dart_client(api_key: str | None = None):
-    """OpenDartReader 클라이언트를 생성합니다.
-
-    OpenDartReader가 설치되지 않은 환경에서도 다른 모듈 import가 가능하도록,
-    실제 라이브러리 import는 이 함수 호출 시점에만 수행합니다.
-    """
-    import OpenDartReader
-
-    api_key = api_key or os.environ["OPENDART_API_KEY"]
-    logger.info("[dart] creating OpenDartReader client")
-    return OpenDartReader(api_key)
-
-
-def find_latest_business_report(
-    dart,
-    dart_code: str,
-    start_date: str = "2026-01-01",
-    end_date: str | None = None,
-) -> dict[str, Any] | None:
-    """조회 기간 내 최신 사업보고서 접수 정보를 찾습니다.
-
-    우선 report_nm에 '사업보고서'가 포함된 문서를 고르고, 없으면 가장 최신 정기공시
-    문서를 fallback으로 사용합니다.
-    """
-    end_date = end_date or datetime.now().strftime("%Y-%m-%d")
-    logger.info("[dart] list dart_code=%s start=%s end=%s kind=A", dart_code, start_date, end_date)
-    docs = retry_call(dart.list, dart_code, start=start_date, end=end_date, kind="A")
-
-    if docs is None or len(docs) == 0:
-        logger.info("[dart] no reports dart_code=%s", dart_code)
-        return None
-
-    candidates = docs[docs["report_nm"].str.contains("사업보고서", na=False)]
-    if candidates.empty:
-        candidates = docs
-
-    doc = candidates.sort_values("rcept_dt", ascending=False).iloc[0]
-    logger.info("[dart] selected report dart_code=%s report_nm=%s rcept_no=%s", dart_code, doc.get("report_nm"), doc.get("rcept_no"))
-    return doc.to_dict()
-
-
-def fetch_dart_document_xml(
-    dart,
-    rcept_no: str,
-) -> dict[str, Any]:
-    """DART 문서 XML 원문을 조회합니다."""
-    logger.info("[dart] document rcept_no=%s", rcept_no)
+def fetch_disclosure_list(dart: ODR, dart_code: str, months: int = 3) -> list[dict]:
+    """최근 months개월 공시 목록을 수집합니다."""
+    now = datetime.now()
+    start = now - timedelta(days=months * 31)
     try:
-        xml_text = retry_call(dart.document, rcept_no)
+        df = dart.list(dart_code, start.strftime("%Y%m%d"), now.strftime("%Y%m%d"))
+        if df is None or df.empty:
+            return []
+        return dataframe_to_records(df[["rcept_no", "rcept_dt", "report_nm"]].head(50))
     except Exception as exc:
-        logger.warning("[dart] document failed rcept_no=%s error=%s", rcept_no, exc)
+        raise DARTDataError(f"disclosure list failed dart_code={dart_code}") from exc
+
+
+def fetch_latest_business_report(dart: ODR, dart_code: str) -> dict | None:
+    """최신 사업보고서를 수집하고 XML을 파싱해 핵심 섹션을 반환합니다."""
+    now = datetime.now()
+    end = now.strftime("%Y%m%d")
+    start = (now - timedelta(days=365)).strftime("%Y%m%d")
+    try:
+        reports = dart.list(dart_code, start, end, kind="A")  # A: 사업보고서
+        if reports is None or reports.empty:
+            return None
+        latest = reports.sort_values("rcept_dt", ascending=False).iloc[0]
+        rcept_no = latest["rcept_no"]
+
+        try:
+            document = dart.document(rcept_no)
+            sections = preprocess_dart_sections(document) if document else {}
+        except Exception as exc:
+            logger.warning("[dart] xml parse failed rcept_no=%s error=%s", rcept_no, exc)
+            sections = {}
+
         return {
             "rcept_no": rcept_no,
-            "xml_text": None,
-            "error": str(exc),
+            "rcept_dt": latest.get("rcept_dt"),
+            "report_nm": latest.get("report_nm"),
+            "sections": sections,
         }
-    return {"rcept_no": rcept_no, "xml_text": xml_text, "error": None}
-
-
-def fetch_raw_financial_statements(
-    dart,
-    dart_code: str,
-    year: int = 2025,
-    reprt_code: str = "11011",
-) -> dict[str, Any]:
-    """DART 재무제표 raw DataFrame을 조회합니다."""
-    logger.info("[dart] finstate dart_code=%s year=%s reprt_code=%s", dart_code, year, reprt_code)
-    try:
-        fs = retry_call(dart.finstate, dart_code, year, reprt_code=reprt_code)
+    except DARTDataError:
+        raise
     except Exception as exc:
-        logger.warning(
-            "[dart] finstate failed dart_code=%s year=%s reprt_code=%s error=%s",
-            dart_code,
-            year,
-            reprt_code,
-            exc,
-        )
-        return {"data": None, "error": str(exc)}
-    if fs is None or len(fs) == 0:
-        logger.info("[dart] no finstate dart_code=%s year=%s", dart_code, year)
-        return {"data": None, "error": None}
-    return {"data": fs, "error": None}
+        raise DARTDataError(f"business report failed dart_code={dart_code}") from exc
+
+
+def fetch_financial_statements(dart: ODR, dart_code: str, year: int | None = None) -> list[dict]:
+    """최근 연도 재무제표를 수집하고 핵심 계정으로 정규화해 반환합니다."""
+    year = year or (datetime.now().year - 1)
+    try:
+        df = dart.finstate(dart_code, year, reprt_code="11011")  # 11011: 사업보고서
+        return normalize_financial_statements(df, fs_year=year)
+    except Exception as exc:
+        raise DARTDataError(f"financial statements failed dart_code={dart_code} year={year}") from exc

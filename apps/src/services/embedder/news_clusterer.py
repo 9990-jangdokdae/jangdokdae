@@ -1,149 +1,145 @@
-"""뉴스 클러스터링 모듈.
-
-poc.ipynb의 "임베딩 & 클러스터링" 셀을 함수화했습니다.
-기사 embedding을 AgglomerativeClustering으로 이슈별 묶음으로 만들고, 각 클러스터의
-중심점에 가장 가까운 기사를 대표기사로 표시합니다.
-"""
+"""뉴스 기사 클러스터링 모듈."""
 
 import logging
 
+import hdbscan
 import numpy as np
-import pandas as pd
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics.pairwise import cosine_similarity
+import umap
 
-from apps.src.services.preprocessor.news_preprocessor import normalize_news_columns
-from apps.src.config import pipeline_config
+from apps.src.exceptions.processing_exceptions import ClusterError
 
 logger = logging.getLogger(__name__)
 
 
-def cluster_news_embeddings(
-    df: pd.DataFrame,
-    embeddings: np.ndarray,
-    distance_threshold: float = pipeline_config.CLUSTER_DISTANCE_THRESHOLD,
-) -> pd.DataFrame:
-    """embedding 배열을 기준으로 cluster_id를 부여하고 대표기사 순위를 계산합니다.
+class NewsClusterer:
+    """UMAP 차원 축소 + HDBSCAN 클러스터링.
 
-    distance_threshold가 낮을수록 더 엄격하게 묶이고, 높을수록 더 큰 클러스터가
-    만들어집니다. 현재 기본값 0.35는 노트북 POC에서 사용한 값입니다.
+    단독 기사(노이즈)는 버리지 않고 singleton 클러스터로 보존한다.
+
+    Args:
+        min_cluster_size: 클러스터 최소 기사 수.
+        min_samples: 노이즈 판정 민감도. 낮을수록 더 많은 기사가 클러스터에 포함.
+        umap_components: UMAP 축소 목표 차원.
     """
-    out = normalize_news_columns(df).copy().reset_index(drop=True)
-    logger.info("[cluster] fitting agglomerative rows=%s threshold=%s", len(out), distance_threshold)
-    clustering_model = AgglomerativeClustering(
-        n_clusters=None,
-        metric="cosine",
-        linkage="average",
-        distance_threshold=distance_threshold,
-    )
-    out["cluster_id"] = clustering_model.fit_predict(embeddings)
-    logger.info("[cluster] assigned clusters=%s", out["cluster_id"].nunique())
-    return rank_articles_in_cluster(out, embeddings)
 
+    def __init__(
+        self,
+        min_cluster_size: int = 2,
+        min_samples: int = 1,
+        umap_components: int = 5,
+    ) -> None:
+        """클러스터링 하이퍼파라미터(최소 클러스터 크기, 노이즈 민감도, UMAP 차원)를 초기화합니다."""
+        self.min_cluster_size = min_cluster_size
+        self.min_samples = min_samples
+        self.umap_components = umap_components
 
-def rank_articles_in_cluster(df: pd.DataFrame, embeddings: np.ndarray) -> pd.DataFrame:
-    """클러스터별 크기, 중심점 유사도, 클러스터 내 순위를 DataFrame에 추가합니다.
+    def cluster(self, articles: list[dict]) -> list[dict]:
+        """기사 목록을 클러스터링하고 결과를 반환합니다.
 
-    rank_in_cluster == 0인 기사가 해당 클러스터의 대표기사입니다.
-    """
-    out = df.copy()
-    out["cluster_size"] = 0
-    out["rank_in_cluster"] = -1
-    out["similarity_to_centroid"] = np.nan
-    out["is_representative"] = False
+        Args:
+            articles: embedding 필드를 포함한 기사 목록.
 
-    logger.info("[cluster] ranking clusters=%s", out["cluster_id"].nunique())
-    for cid in out["cluster_id"].unique():
-        cluster_idx = out[out["cluster_id"] == cid].index.to_numpy()
-        cluster_size = len(cluster_idx)
-        logger.info("[cluster] rank cluster_id=%s size=%s", cid, cluster_size)
-        out.loc[cluster_idx, "cluster_size"] = cluster_size
+        Returns:
+            클러스터 목록. 멀티 클러스터(size 내림차순) → singleton(published_date 순).
+            각 기사에서 embedding 필드는 제거됩니다.
+        """
+        embeddings = np.array([a["embedding"] for a in articles], dtype=np.float32)
+        logger.info("[cluster] articles=%d dim=%d", len(articles), embeddings.shape[1])
 
-        cluster_embeddings = embeddings[cluster_idx]
-        centroid = np.mean(cluster_embeddings, axis=0).reshape(1, -1)
-        sims = cosine_similarity(centroid, cluster_embeddings)[0]
-        sorted_local_indices = np.argsort(sims)[::-1]
+        reduced = self._reduce(embeddings)
+        labels = self._hdbscan(reduced)
 
-        for rank, local_idx in enumerate(sorted_local_indices):
-            global_idx = cluster_idx[local_idx]
-            out.loc[global_idx, "rank_in_cluster"] = rank
-            out.loc[global_idx, "similarity_to_centroid"] = sims[local_idx]
+        n_noise = int((labels == -1).sum())
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        logger.info("[cluster] hdbscan clusters=%d noise=%d", n_clusters, n_noise)
 
-        representative_global_idx = cluster_idx[sorted_local_indices[0]]
-        out.loc[representative_global_idx, "is_representative"] = True
+        return self._build_clusters(articles, embeddings, labels)
 
-    return out
-
-
-def select_representative_articles(df: pd.DataFrame) -> pd.DataFrame:
-    """클러스터 대표기사만 반환합니다."""
-    return df[df["is_representative"]].copy()
-
-
-def summarize_top_clusters(
-    df: pd.DataFrame,
-    top_n_clusters: int = pipeline_config.CLUSTER_TOP_N_CLUSTERS,
-    top_k_articles: int = pipeline_config.CLUSTER_TOP_K_ARTICLES,
-    min_cluster_size: int = pipeline_config.CLUSTER_MIN_SIZE,
-) -> pd.DataFrame:
-    """상위 클러스터의 대표/주요 기사 목록만 요약 DataFrame으로 반환합니다."""
-    valid = (
-        df[["cluster_id", "cluster_size"]]
-        .drop_duplicates()
-        .query("cluster_size >= @min_cluster_size")
-        .sort_values("cluster_size", ascending=False)
-        .head(top_n_clusters)
-    )
-    top_cluster_ids = valid["cluster_id"].tolist()
-
-    rows = []
-    for cid in top_cluster_ids:
-        cluster_articles = (
-            df[df["cluster_id"] == cid]
-            .sort_values("rank_in_cluster")
-            .head(top_k_articles)
+    def _reduce(self, embeddings: np.ndarray) -> np.ndarray:
+        """UMAP으로 임베딩 차원을 umap_components로 축소합니다."""
+        reducer = umap.UMAP(
+            n_components=self.umap_components,
+            metric="cosine",
+            random_state=42,
         )
-        for _, row in cluster_articles.iterrows():
-            rows.append({
-                "cluster_id": cid,
-                "cluster_size": int(row["cluster_size"]),
-                "rank_in_cluster": int(row["rank_in_cluster"]),
-                "article_idx": int(row.name),
-                "similarity_to_centroid": float(row["similarity_to_centroid"]),
-                "is_representative": bool(row["is_representative"]),
-                "news_title": row["news_title"],
-            })
+        try:
+            return reducer.fit_transform(embeddings)
+        except Exception as exc:
+            raise ClusterError(str(exc), articles_count=len(embeddings), stage="umap") from exc
 
-    return pd.DataFrame(rows)
-
-
-def get_top_cluster_articles(
-    df: pd.DataFrame,
-    top_n_clusters: int = pipeline_config.CLUSTER_TOP_N_CLUSTERS,
-    top_k_articles: int = pipeline_config.CLUSTER_TOP_K_ARTICLES,
-    min_cluster_size: int = pipeline_config.CLUSTER_MIN_SIZE,
-) -> pd.DataFrame:
-    """클러스터 크기 기준 상위 N개에서 각 클러스터별 상위 K개 기사만 가져옵니다."""
-    top_cluster_ids = (
-        df[["cluster_id", "cluster_size"]]
-        .drop_duplicates()
-        .query("cluster_size >= @min_cluster_size")
-        .sort_values("cluster_size", ascending=False)
-        .head(top_n_clusters)["cluster_id"]
-        .tolist()
-    )
-
-    return (
-        df[df["cluster_id"].isin(top_cluster_ids)]
-        .sort_values(
-            ["cluster_size", "cluster_id", "rank_in_cluster"],
-            ascending=[False, True, True],
+    def _hdbscan(self, embeddings: np.ndarray) -> np.ndarray:
+        """HDBSCAN으로 클러스터 레이블 배열을 반환합니다. 노이즈는 -1."""
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=self.min_cluster_size,
+            min_samples=self.min_samples,
+            metric="euclidean",
         )
-        .groupby("cluster_id", group_keys=False)
-        .head(top_k_articles)
-        .copy()
-    )
+        try:
+            return clusterer.fit_predict(embeddings)
+        except Exception as exc:
+            raise ClusterError(str(exc), articles_count=len(embeddings), stage="hdbscan") from exc
 
+    def _build_clusters(
+        self,
+        articles: list[dict],
+        embeddings: np.ndarray,
+        labels: np.ndarray,
+    ) -> list[dict]:
+        """레이블 배열을 바탕으로 멀티 클러스터와 singleton을 조합한 클러스터 목록을 생성합니다."""
+        cluster_map: dict[int, list[int]] = {}
+        for i, label in enumerate(labels):
+            cluster_map.setdefault(int(label), []).append(i)
 
-assign_clusters = cluster_news_embeddings
-add_cluster_rankings = rank_articles_in_cluster
+        clusters: list[dict] = []
+        next_id = 1
+
+        for label, idxs in sorted(
+            ((lbl, idxs) for lbl, idxs in cluster_map.items() if lbl != -1),
+            key=lambda x: -len(x[1]),
+        ):
+            clusters.append(self._make_cluster(next_id, idxs, articles, embeddings, is_singleton=False))
+            next_id += 1
+
+        for i in (cluster_map.get(-1) or []):
+            clusters.append(self._make_cluster(next_id, [i], articles, embeddings, is_singleton=True))
+            next_id += 1
+
+        n_singleton = len(cluster_map.get(-1) or [])
+        logger.info(
+            "[cluster] total=%d multi=%d singleton=%d",
+            len(clusters),
+            len(clusters) - n_singleton,
+            n_singleton,
+        )
+        return clusters
+
+    def _make_cluster(
+        self,
+        cluster_id: int,
+        idxs: list[int],
+        articles: list[dict],
+        embeddings: np.ndarray,
+        is_singleton: bool,
+    ) -> dict:
+        """기사 인덱스 목록으로 클러스터 dict를 생성하고 centroid 유사도 기준으로 정렬합니다."""
+        cluster_embeddings = embeddings[idxs]
+        centroid = cluster_embeddings.mean(axis=0)
+        centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-10)
+
+        cluster_articles = []
+        for i in idxs:
+            emb = embeddings[i]
+            similarity = float(np.dot(emb, centroid_norm))
+            article = dict(articles[i])
+            article.pop("embedding", None)
+            article["similarity_to_centroid"] = round(similarity, 4)
+            cluster_articles.append(article)
+
+        cluster_articles.sort(key=lambda a: -a["similarity_to_centroid"])
+
+        return {
+            "cluster_id": cluster_id,
+            "size": len(idxs),
+            "is_singleton": is_singleton,
+            "articles": cluster_articles,
+        }
