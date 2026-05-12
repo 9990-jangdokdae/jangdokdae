@@ -12,6 +12,7 @@ import OpenDartReader as ODR
 import pandas as pd
 
 from apps.src.utils.json_utils import dataframe_to_records, save_json
+from apps.src.services.collector.krx_collector import fetch_sector_and_market
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class CompanyMasterCollector:
         return datetime.now() - mtime < timedelta(hours=_CACHE_TTL_HOURS)
 
     def _build(self) -> pd.DataFrame:
-        """DART corp_code.xml에서 상장 기업만 추출해 dart_code/dart_name/krx_code 매핑 DataFrame을 생성합니다."""
+        """DART corp_code.xml에서 상장 기업만 추출하고 PyKRX sector/market을 병합합니다."""
         dart = ODR(os.environ["OPENDART_API_KEY"])
 
         df = dart.corp_codes
@@ -52,4 +53,9 @@ class CompanyMasterCollector:
             .pipe(lambda d: d[d["krx_code"].notna() & (d["krx_code"].str.strip() != "")])
             .reset_index(drop=True)
         )
+
+        today = datetime.now().strftime("%Y%m%d")
+        sector_map = fetch_sector_and_market(today)
+        master["market"] = master["krx_code"].map(lambda c: sector_map.get(c, (None, None))[0])
+        master["sector"] = master["krx_code"].map(lambda c: sector_map.get(c, (None, None))[1])
         return master

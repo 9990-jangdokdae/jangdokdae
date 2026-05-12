@@ -88,14 +88,41 @@ def _preprocess_audit_opinion(xml: str) -> str:
     return "\n".join(selected if len(selected) >= 20 else lines)
 
 
-def preprocess_dart_sections(xml_text: str) -> dict[str, str]:
+def _extract_subsections(section_xml: str) -> list[tuple[str, str]]:
+    """섹션 XML을 아라비아 숫자 소제목(TITLE 태그) 기준으로 분할합니다.
+
+    Returns:
+        [(subsection_title, xml_fragment), ...] — 소제목 없으면 [("", section_xml)]
+    """
+    title_pat = re.compile(r"<TITLE[^>]*>(.*?)</TITLE>", re.IGNORECASE | re.DOTALL)
+    sub_pat = re.compile(r"^\s*\d+\.\s+.+$")
+
+    matches = list(title_pat.finditer(section_xml))
+    candidates = []
+    for m in matches:
+        text = re.sub(r"\s+", " ", m.group(1)).strip()
+        if sub_pat.match(text):
+            candidates.append({"title": text, "start": m.start()})
+
+    if not candidates:
+        return [("", section_xml)]
+
+    result = []
+    for i, item in enumerate(candidates):
+        end = candidates[i + 1]["start"] if i + 1 < len(candidates) else len(section_xml)
+        result.append((item["title"], section_xml[item["start"]:end]))
+    return result
+
+
+def preprocess_dart_sections(xml_text: str) -> dict[str, list[dict]]:
     """사업보고서 XML에서 3개 대분류 섹션을 추출·정제합니다.
 
     Returns:
-        {"II_business": ..., "IV_director_analysis": ..., "V_audit_opinion": ...}
+        {"II_business": [{"subsection": "1. ...", "content": "..."}, ...], ...}
+        소제목이 없으면 subsection=""
     """
     raw_sections = _extract_major_sections(xml_text)
-    result: dict[str, str] = {}
+    result: dict[str, list[dict]] = {}
 
     preprocessors = {
         "II. 사업의 내용": ("II_business", _preprocess_business),
@@ -104,7 +131,15 @@ def preprocess_dart_sections(xml_text: str) -> dict[str, str]:
     }
     for title, (key, fn) in preprocessors.items():
         xml = raw_sections.get(title, "")
-        result[key] = fn(xml) if xml else ""
+        if not xml:
+            result[key] = []
+            continue
+        chunks = []
+        for subsection, sub_xml in _extract_subsections(xml):
+            content = fn(sub_xml)
+            if content.strip():
+                chunks.append({"subsection": subsection, "content": content})
+        result[key] = chunks if chunks else []
 
     return result
 
@@ -151,7 +186,7 @@ def normalize_financial_statements(
 
     records = []
     for row in fs.to_dict(orient="records"):
-        base = {k: to_json_safe(row.get(k)) for k in ("corp_code", "stock_code", "fs_div", "fs_nm", "sj_div", "sj_nm", "account_nm")}
+        base = {k: to_json_safe(row.get(k)) for k in ("corp_code", "stock_code", "fs_div", "fs_nm", "sj_div", "sj_nm", "account_nm", "rcept_no")}
         for period_type, period_col, amount_col, year in period_specs:
             if amount_col not in fs.columns:
                 continue

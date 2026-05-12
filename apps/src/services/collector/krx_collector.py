@@ -28,6 +28,19 @@ def _trim_and_convert(df, days: int) -> list[dict]:
     return dataframe_to_records(df)
 
 
+def fetch_sector_and_market(date: str) -> dict[str, tuple[str, str]]:
+    """KOSPI·KOSDAQ 전 종목의 (market, 업종명) 반환. {krx_code: (market, sector)}"""
+    result: dict[str, tuple[str, str]] = {}
+    for market in ("KOSPI", "KOSDAQ"):
+        try:
+            df = stock.get_market_sector_classifications(date, market)
+            for krx_code, row in df.iterrows():
+                result[str(krx_code)] = (market, row["업종명"])
+        except Exception as exc:
+            logger.warning("[krx] sector fetch failed market=%s error=%s", market, exc)
+    return result
+
+
 def fetch_ohlcv(krx_code: str, days: int = 60, end_date: str | None = None) -> list[dict]:
     """OHLCV를 최근 days 거래일 기준으로 수집합니다. 날짜 내림차순."""
     end_date = end_date or datetime.now().strftime("%Y%m%d")

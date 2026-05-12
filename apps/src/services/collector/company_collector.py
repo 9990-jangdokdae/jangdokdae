@@ -7,7 +7,7 @@ from datetime import datetime
 import OpenDartReader as ODR
 import pandas as pd
 
-from apps.src.exceptions.company_exceptions import CompanyMatchError, DARTDataError, FFDataError
+from apps.src.exceptions.company_exceptions import CompanyMatchError, DARTDataError, KRXDataError
 from apps.src.services.collector.company_master_collector import CompanyMasterCollector
 from apps.src.services.collector.dart_collector import (
     fetch_disclosure_list,
@@ -17,6 +17,22 @@ from apps.src.services.collector.dart_collector import (
 from apps.src.services.collector.krx_collector import fetch_ohlcv
 
 logger = logging.getLogger(__name__)
+
+
+def _pd_str(row: pd.Series, col: str) -> str | None:
+    """pandas Series에서 컬럼 값을 가져오되 NaN·None·"None" 문자열은 None으로 반환합니다.
+
+    dtype=str로 JSON 로드 시 null → 문자열 "None"이 되는 pandas 동작을 보정합니다.
+    """
+    val = row.get(col)
+    if val is None or val == "None":
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(val)
 
 
 class CompanyCollector:
@@ -62,7 +78,7 @@ class CompanyCollector:
     ) -> dict:
         """단일 기업명에 대해 KRX·DART 전 데이터를 수집하고 결과 dict를 반환합니다."""
         try:
-            krx_code, dart_code = self._match(company_name, master)
+            krx_code, dart_code, dart_name, sector, market = self._match(company_name, master)
         except CompanyMatchError as exc:
             logger.warning("[company] match failed company=%s reason=%s", company_name, exc)
             return {"company_name": company_name, "matched": False}
@@ -72,12 +88,15 @@ class CompanyCollector:
             "matched": True,
             "krx_code": krx_code,
             "dart_code": dart_code,
-            "market": {},
+            "dart_name": dart_name,
+            "sector": sector,
+            "market": market,       # "KOSPI" | "KOSDAQ" | None
+            "market_data": {},      # {"ohlcv": [...]}
             "dart": {},
         }
 
         try:
-            result["market"]["ohlcv"] = fetch_ohlcv(krx_code, self.market_days, self._end_date)
+            result["market_data"]["ohlcv"] = fetch_ohlcv(krx_code, self.market_days, self._end_date)
         except KRXDataError as exc:
             logger.warning("[company] ohlcv failed company=%s reason=%s", company_name, exc)
 
@@ -98,18 +117,18 @@ class CompanyCollector:
 
         return result
 
-    def _match(self, company_name: str, master: pd.DataFrame) -> tuple[str, str]:
-        """기업명으로 krx_code와 dart_code를 반환합니다. 정확 매칭 우선, 없으면 부분 매칭을 시도합니다."""
+    def _match(self, company_name: str, master: pd.DataFrame) -> tuple[str, str, str, str | None, str | None]:
+        """기업명으로 (krx_code, dart_code, dart_name, sector, market)을 반환합니다."""
         # 정확 매칭 우선
         exact = master[master["dart_name"] == company_name]
         if not exact.empty:
             row = exact.iloc[0]
-            return row["krx_code"], row["dart_code"]
+            return row["krx_code"], row["dart_code"], row["dart_name"], _pd_str(row, "sector"), _pd_str(row, "market")
 
         # 부분 매칭 — 길이 차이가 작은 순(가장 유사한 이름 우선)
         partial = master[master["dart_name"].str.contains(company_name, na=False, regex=False)]
         if not partial.empty:
             row = partial.loc[partial["dart_name"].str.len().sub(len(company_name)).abs().idxmin()]
-            return row["krx_code"], row["dart_code"]
+            return row["krx_code"], row["dart_code"], row["dart_name"], _pd_str(row, "sector"), _pd_str(row, "market")
 
         raise CompanyMatchError(f"no match for '{company_name}'")

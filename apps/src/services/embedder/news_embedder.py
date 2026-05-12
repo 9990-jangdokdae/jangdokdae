@@ -67,6 +67,16 @@ class NewsEmbedder:
 
         return articles
 
+    def embed_text(self, text: str) -> list[float]:
+        """단일 텍스트 임베딩. 청크 분할 후 평균 풀링."""
+        chunks = self._chunk(text)
+        embeddings = self._model.encode(
+            chunks,
+            batch_size=self.batch_size,
+            normalize_embeddings=True,
+        )
+        return np.mean(embeddings, axis=0).tolist()
+
     def _chunk(self, text: str) -> list[str]:
         """텍스트를 모델 최대 토큰 길이 기준으로 겹치는 청크로 분할합니다."""
         stride = max(1, self._max_len - self.overlap)

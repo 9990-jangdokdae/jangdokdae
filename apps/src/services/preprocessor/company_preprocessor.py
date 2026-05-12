@@ -39,9 +39,9 @@ class CompanyPreprocessor:
         if not co.get("matched", False):
             return co
 
-        market = co.get("market", {})
-        if market.get("ohlcv"):
-            market["ohlcv"] = [self._rename_ohlcv(row) for row in market["ohlcv"]]
+        market_data = co.get("market_data", {})
+        if market_data.get("ohlcv"):
+            market_data["ohlcv"] = [self._rename_ohlcv(row) for row in market_data["ohlcv"]]
 
         dart = co.get("dart", {})
         if dart.get("disclosures"):

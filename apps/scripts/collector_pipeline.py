@@ -1,6 +1,7 @@
 """뉴스 수집 파이프라인 실행 스크립트."""
 
 import argparse
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from apps.src.services.embedder.news_embedder import NewsEmbedder
 from apps.src.services.extractor.entity_extractor import EntityExtractor
 from apps.src.services.preprocessor.news_preprocessor import NewsPreprocessor
 from apps.src.utils.json_utils import save_json
+from apps.src.db import PipelineStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -175,18 +177,52 @@ def main() -> None:
 
     _validate_env()
 
+    repo = PipelineStore()
+    run_date = datetime.now().date()
+
     data: Any = None
     failed_steps: list[str] = []
+    article_id_map: dict = {}
+    cluster_id_map: dict = {}
 
     for name, step_fn, fatal in _PIPELINE:
         result = _run_step(name, step_fn, run_dir, data, args, fatal=fatal)
         if result.success:
             data = result.data
+            _save_step_to_db(name, data, repo, run_date, article_id_map, cluster_id_map)
         else:
             failed_steps.append(name)
 
     if failed_steps:
         logger.warning("[pipeline] done with non-fatal failures steps=%s run_id=%s output=%s", failed_steps, run_id, run_dir)
+
+
+def _save_step_to_db(
+    name: str,
+    data: Any,
+    repo: PipelineStore,
+    run_date: Any,
+    article_id_map: dict,
+    cluster_id_map: dict,
+) -> None:
+    """각 단계 성공 후 DB 저장. 실패해도 파이프라인은 계속 진행."""
+    try:
+        if name == "preprocess":
+            result = asyncio.run(repo.save_articles(data))
+            article_id_map.update(result)
+
+        elif name == "cluster":
+            result = asyncio.run(repo.save_clusters(data, run_date, article_id_map))
+            cluster_id_map.update(result)
+
+        elif name == "extract":
+            asyncio.run(repo.save_entity_extraction(data, cluster_id_map))
+
+        elif name == "preprocess_company":
+            asyncio.run(repo.save_company_data(data))
+
+    except Exception as exc:
+        logger.warning("[pipeline] db save failed step=%s error=%s", name, exc, exc_info=True)
 
 
 if __name__ == "__main__":
