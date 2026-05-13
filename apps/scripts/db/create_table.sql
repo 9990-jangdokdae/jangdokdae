@@ -1,4 +1,5 @@
-CREATE TABLE articles (
+----------------------------------- articles -----------------------------------
+CREATE TABLE IF NOT EXISTS articles (
   id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   article_id     VARCHAR(20) NOT NULL UNIQUE, -- 네이버 article_id
   office_id      VARCHAR(10),
@@ -9,7 +10,11 @@ CREATE TABLE articles (
   content        TEXT NOT NULL
 );
 
-CREATE TABLE clusters (
+CREATE INDEX IF NOT EXISTS idx_articles_published_date ON articles(published_date DESC);
+-- CREATE INDEX IF NOT EXISTS idx_articles_embedding ON articles USING hnsw (embedding vector_cosine_ops);  -- pgvector
+
+----------------------------------- clusters -----------------------------------
+CREATE TABLE IF NOT EXISTS clusters (
   id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   run_date     DATE NOT NULL, -- 파이프라인 실행 날짜
   cluster_seq  INT NOT NULL,  -- 파이프라인 내 cluster_id (1, 2)
@@ -18,15 +23,21 @@ CREATE TABLE clusters (
   created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE(run_date, cluster_seq)
 );
+-- clusters: 날짜 조회
+CREATE INDEX IF NOT EXISTS idx_clusters_run_date ON clusters(run_date DESC);
 
-CREATE TABLE cluster_articles (
+----------------------------------- cluster_articles  -----------------------------------
+CREATE TABLE IF NOT EXISTS cluster_articles (
   cluster_id             BIGINT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
   article_id             BIGINT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
   similarity_to_centroid FLOAT,
   PRIMARY KEY (cluster_id, article_id)
 );
+-- cluster_articles: 클러스터별 기사 조회
+CREATE INDEX IF NOT EXISTS idx_cluster_articles_cluster_id ON cluster_articles(cluster_id);
 
-CREATE TABLE entity_extraction (
+----------------------------------- entity_extraction -----------------------------------
+CREATE TABLE IF NOT EXISTS entity_extraction (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   cluster_id    BIGINT NOT NULL REFERENCES clusters(id) ON DELETE CASCADE,
   company_names TEXT[] NOT NULL DEFAULT '{}',  -- KRX 기준 정규화 법인명
@@ -34,8 +45,11 @@ CREATE TABLE entity_extraction (
   keywords      TEXT[] NOT NULL DEFAULT '{}',
   UNIQUE(cluster_id)  -- 클러스터당 1개 추출 결과
 );
+-- entity_extraction: 클러스터 조회
+CREATE INDEX IF NOT EXISTS idx_entity_extraction_cluster_id ON entity_extraction(cluster_id);
 
-CREATE TABLE company_master (
+----------------------------------- company_master -----------------------------------
+CREATE TABLE IF NOT EXISTS company_master (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   krx_code   VARCHAR(6) UNIQUE NOT NULL,
   dart_code  VARCHAR(8) UNIQUE,
@@ -46,7 +60,9 @@ CREATE TABLE company_master (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE dart_financial_statements (
+
+-----------------------------------dart_financial_statements -----------------------------------
+CREATE TABLE IF NOT EXISTS dart_financial_statements (
   id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id        BIGINT NOT NULL REFERENCES company_master(id) ON DELETE CASCADE,
   fiscal_year       SMALLINT NOT NULL,
@@ -68,8 +84,11 @@ CREATE TABLE dart_financial_statements (
   updated_at        TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE(company_id, fiscal_year, fs_div, reprt_code)
 );
+-- dart_financial_statements: 종목별 연도 조회
+CREATE INDEX IF NOT EXISTS idx_dart_financial_company_year ON dart_financial_statements(company_id, fiscal_year DESC);
 
-CREATE TABLE dart_document (
+----------------------------------- dart_document -----------------------------------
+CREATE TABLE IF NOT EXISTS dart_document (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id    BIGINT NOT NULL REFERENCES company_master(id) ON DELETE CASCADE,
   document_type VARCHAR(20) NOT NULL
@@ -86,23 +105,21 @@ CREATE TABLE dart_document (
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE(company_id, fiscal_year, section, subsection)
 );
-
--- articles: 날짜 조회, 벡터 검색
-CREATE INDEX ON articles(published_date DESC);
--- CREATE INDEX ON articles USING hnsw (embedding vector_cosine_ops);  -- pgvector
-
--- clusters: 날짜 조회
-CREATE INDEX ON clusters(run_date DESC);
-
--- cluster_articles: 클러스터별 기사 조회
-CREATE INDEX ON cluster_articles(cluster_id);
-
--- entity_extraction: 클러스터 조회
-CREATE INDEX ON entity_extraction(cluster_id);
-
--- dart_financial_statements: 종목별 연도 조회
-CREATE INDEX ON dart_financial_statements(company_id, fiscal_year DESC);
-
 -- dart_document: 종목별 벡터 검색
-CREATE INDEX ON dart_document(company_id);
-CREATE INDEX ON dart_document USING hnsw (embedding vector_cosine_ops);  -- pgvector
+CREATE INDEX IF NOT EXISTS idx_dart_document_company_id ON dart_document(company_id);
+CREATE INDEX IF NOT EXISTS idx_dart_document_embedding ON dart_document USING hnsw (embedding vector_cosine_ops);  -- pgvector
+
+----------------------------------- users -----------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  provider           VARCHAR(10) NOT NULL,           -- 'kakao' | 'google'
+  provider_id        VARCHAR(100) NOT NULL,
+  nickname           VARCHAR(100) NOT NULL,
+  interest_sectors   TEXT[] NOT NULL DEFAULT '{}',
+  interest_companies TEXT[] NOT NULL DEFAULT '{}',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (provider, provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
