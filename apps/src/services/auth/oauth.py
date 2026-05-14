@@ -17,11 +17,13 @@ GOOGLE_USER_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 # ── 카카오 ─────────────────────────────────────────────────────────────────
 
 
-def kakao_login_url(redirect_uri: str) -> str:
+def kakao_login_url(redirect_uri: str, state: str) -> str:
+    """state 포함 카카오 OAuth 인가 URL을 반환한다. (RFC 6749 §10.12 CSRF 방지)"""
     params = {
         "client_id": os.environ["KAKAO_CLIENT_ID"],
         "redirect_uri": redirect_uri,
         "response_type": "code",
+        "state": state,
     }
     return f"{KAKAO_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
@@ -64,13 +66,15 @@ async def kakao_fetch_user(code: str, redirect_uri: str) -> dict:
 # ── 구글 ───────────────────────────────────────────────────────────────────
 
 
-def google_login_url(redirect_uri: str) -> str:
+def google_login_url(redirect_uri: str, state: str) -> str:
+    """state 포함 구글 OAuth 인가 URL을 반환한다. (RFC 6749 §10.12 CSRF 방지)"""
     params = {
         "client_id": os.environ["GOOGLE_CLIENT_ID"],
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
+        "state": state,
     }
     return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
 

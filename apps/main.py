@@ -9,8 +9,8 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.src.controllers.authentication import router as auth_router
-from apps.src.controllers.user_info import router as user_router
+from apps.src.api.auth import router as auth_router
+from apps.src.api.users import router as user_router
 
 app = FastAPI(title="장독대 API")
 
