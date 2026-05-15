@@ -219,7 +219,6 @@ LangGraph의 상태 기반 워크플로우를 사용하면 각 단계의 실행 
 ### 사전 준비
 
 - Python 3.12+
-- Node.js 18+ (프론트엔드)
 - Google Gemini API Key
 - OpenAI API Key (임베딩용)
 - 네이버 개발자 앱 (Client ID / Secret)
@@ -228,8 +227,8 @@ LangGraph의 상태 기반 워크플로우를 사용하면 각 단계의 실행 
 ### 1. 저장소 클론
 
 ```bash
-git clone https://github.com/kmk9259/jangdokdae.git
-cd jangdokdae
+git clone https://github.com/9990-jangdokdae/jangdokdae-server.git
+cd jangdokdae-server
 ```
 
 ### 2. 환경변수 설정
@@ -242,49 +241,20 @@ cp .env.example .env
 ### 3. 백엔드 실행
 
 ```bash
-# 가상환경 생성 및 활성화
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
 # 의존성 설치
-pip install -r requirements.txt
-
-# DB 마이그레이션
-alembic upgrade head
+uv sync
 
 # API 서버 실행
-uvicorn main:app --reload --port 8000
-
-# Celery Worker 실행 (별도 터미널)
-celery -A apps.tasks.celery_app worker --loglevel=info
-
-# Celery Beat 실행 (스케줄러, 별도 터미널)
-celery -A apps.tasks.celery_app beat --loglevel=info
+uv run uvicorn apps.main:app --reload --port 8000
 ```
 
-### 4. 프론트엔드 실행
+`issue_docent` 테이블을 Parent DB에 수동 반영해야 하면 [docs/issue_docent_upload_to_neon.md](docs/issue_docent_upload_to_neon.md)를 참고합니다.
 
-```bash
-cd frontend
-npm install
-npm start
-```
+### 4. 프론트엔드
 
-### 5. Docker로 전체 실행 (운영 환경 권장)
+프론트엔드는 별도 저장소 `jangdokdae-client`에서 관리합니다.
 
-```bash
-docker-compose up --build
-```
-
-| 서비스 | 포트 |
-|--------|------|
-| React (Frontend) | 3000 |
-| FastAPI (Backend) | 8000 |
-| PostgreSQL | 5432 |
-| Redis | 6379 |
-| Qdrant | 6333 |
-
-### 6. API 문서 확인
+### 5. API 문서 확인
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
@@ -392,7 +362,7 @@ Parent DB에 `issue_docent` 테이블을 수동 생성해야 하는 경우 [docs
 
 ## 🔄 데이터 파이프라인
 
-뉴스 수집부터 학습 콘텐츠 생성까지 전 과정이 **LangGraph + Celery**로 자동화됩니다.
+뉴스 수집 파이프라인과 Issue Docent 생성 워크플로우는 각각 실행 스크립트로 관리합니다. Issue Docent 생성 단계는 LangGraph로 오케스트레이션합니다.
 
 ```
 [주기마다]

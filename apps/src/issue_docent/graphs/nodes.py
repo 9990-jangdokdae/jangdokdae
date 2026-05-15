@@ -69,7 +69,7 @@ def validate_before_persist(state: IssueDocentState) -> dict:
         cluster_id=state["cluster"].cluster_id,
         title=cluster_summary.title,
         teaser=cluster_summary.teaser,
-        summary=cluster_summary.model_dump(),
+        summary=cluster_summary.summary,
         explanation=[section.model_dump() for section in issue_docent.explanation],
         quizzes=_assign_quiz_ids(quizzes),
     )

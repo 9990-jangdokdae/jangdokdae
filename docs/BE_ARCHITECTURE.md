@@ -31,7 +31,7 @@ Neon PostgreSQL (클라우드)
 | ORM | SQLAlchemy 2.0 (async) | Python ↔ DB 연결 |
 | 벡터 검색 | pgvector | 뉴스 임베딩 유사도 검색 |
 | 인증 | OAuth 2.0 + JWT | 카카오·구글 소셜 로그인 |
-| LLM | Gemini (Google AI Studio / Vertex AI) | 뉴스 엔티티 추출 |
+| LLM | Gemini (Google AI Studio / Vertex AI) | 뉴스 엔티티 추출, Issue Docent 생성 |
 | 임베딩 | ko-sroberta-multitask | 한국어 뉴스 벡터화 |
 | 클러스터링 | UMAP + HDBSCAN | 유사 뉴스 그룹화 |
 
@@ -49,10 +49,12 @@ jangdokdae-server/
     │
     ├── scripts/                 # 실행 스크립트
     │   ├── collector_pipeline.py  # 뉴스 수집 파이프라인 메인 실행 파일
+    │   ├── generate_issue_docents.py # Issue Docent 생성 wrapper
     │   ├── evaluate_clusters.py   # 클러스터 품질 평가
     │   ├── visualize_clusters.py  # 클러스터 시각화
     │   └── db/
     │       ├── create_table.sql   # DB 테이블 생성 SQL
+    │       ├── create_issue_docent.sql # Issue Docent 수동 반영 SQL
     │       ├── drop_table.sql     # 테이블 삭제 SQL
     │       └── delete.sql         # 데이터 삭제 SQL
     │
@@ -67,8 +69,9 @@ jangdokdae-server/
         │   │                      URL 경로와 처리 함수를 연결하는 역할
         │   ├── auth.py          # /api/v1/auth/* 엔드포인트
         │   │                      로그인, 콜백, 내 정보, 로그아웃
-        │   └── users.py         # /api/v1/user/* 엔드포인트
+        │   ├── users.py         # /api/v1/user/* 엔드포인트
         │                          섹터 목록, 관심 프로필 조회·수정
+        │   └── issue_docent.py  # /api/v1/contents/issue-docent/* 엔드포인트
         │
         ├── config/              # ★ 앱 전반 설정값
         │   ├── database.py      # DB 연결 설정
@@ -96,15 +99,19 @@ jangdokdae-server/
         │   ├── article.py       # articles 테이블 (뉴스 원문)
         │   ├── cluster.py       # clusters, cluster_articles,
         │   │                      entity_extraction 테이블
-        │   └── company.py       # company_master,
+        │   ├── company.py       # company_master,
         │                          dart_financial_statements,
         │                          dart_document 테이블
+        │   ├── issue_docent.py  # issue_docent 테이블
+        │   └── stock_term.py    # stock_terms 테이블
         │
         ├── schemas/             # ★ Pydantic 스키마 (API 입출력 형태)
         │   │                      요청 데이터 검증 + 응답 데이터 직렬화
-        │   └── users.py         # UserResponse       (응답: 사용자 정보)
+        │   ├── users.py         # UserResponse       (응답: 사용자 정보)
         │                          InterestProfileBody (요청: 프로필 저장)
         │                          InterestProfileResponse (응답: 프로필 조회)
+        │   ├── issue_docent.py  # Issue Docent API 응답 스키마
+        │   └── issue_docent_llm.py # Issue Docent LLM 구조화 출력 스키마
         │
         ├── services/            # ★ 비즈니스 로직
         │   │
@@ -135,11 +142,18 @@ jangdokdae-server/
         │   ├── extractor/       # LLM 정보 추출 (파이프라인용)
         │   │   └── entity_extractor.py         # Gemini로 기업·섹터·키워드 추출
         │   │
-        │   └── contents/        # 콘텐츠 생성 (미구현)
+        │   └── issue_docent/    # Issue Docent 읽기·생성 서비스
         │
-        ├── repositories/        # DB 직접 조작 (파이프라인용, Repository 패턴)
-        │   └── pipeline_store.py  # 파이프라인 각 단계 결과 DB 저장
+        ├── issue_docent/        # ★ Issue Docent 전용 도메인
+        │   ├── graphs/          # LangGraph 워크플로우
+        │   ├── llm/             # LLM 클라이언트
+        │   ├── prompts/         # 생성 프롬프트
+        │   └── scripts/         # 실제 생성 실행 코드
+        │
+        ├── repositories/        # DB 직접 조작 (Repository 패턴)
+        │   ├── pipeline_store.py  # 파이프라인 각 단계 결과 DB 저장
         │                            생성 시 NewsEmbedder 주입 필요
+        │   └── issue_docent.py    # Issue Docent 조회·저장
         │
         ├── exceptions/          # 커스텀 예외 클래스 (파이프라인용)
         │   ├── base.py          # PipelineError 베이스, ErrorCode enum
@@ -171,7 +185,9 @@ jangdokdae-server/
 | `dependencies/` | 공통 인증·검증 | "로그인 확인은 어떻게 하나?" |
 | `services/auth/` | JWT·OAuth 처리 | "토큰 생성·검증, 소셜 로그인 처리" |
 | `services/collector~extractor/` | 뉴스 파이프라인 | "뉴스를 어떻게 수집·분석하나?" |
-| `repositories/` | DB 읽기·쓰기 (Repository 패턴) | "파이프라인 결과를 DB에 어떻게 저장하나?" |
+| `services/issue_docent/` | Issue Docent 서비스 | "콘텐츠를 어떻게 읽고 생성하나?" |
+| `issue_docent/` | 생성 워크플로우 | "LLM 단계와 LangGraph를 어떻게 구성하나?" |
+| `repositories/` | DB 읽기·쓰기 (Repository 패턴) | "데이터를 DB에서 어떻게 읽고 저장하나?" |
 | `config/` | 환경·DB·상수 설정 | "DB 연결, 섹터 목록은 어디서?" |
 | `utils/` | 재사용 유틸 함수 | "자주 쓰는 도구 함수들" |
 

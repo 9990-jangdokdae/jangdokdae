@@ -130,6 +130,7 @@ async def test_issue_docent_graph_fans_out_article_briefs_and_builds_payload():
     assert fake_llm.cluster_summary_input_orders == [0, 1]
     assert result["persist_payload"].cluster_id == 10
     assert result["persist_payload"].title == "클러스터 제목"
+    assert result["persist_payload"].summary == "통합 요약"
     assert len(result["persist_payload"].explanation) == 3
     assert [quiz["quiz_id"] for quiz in result["persist_payload"].quizzes] == [
         "quiz-1",

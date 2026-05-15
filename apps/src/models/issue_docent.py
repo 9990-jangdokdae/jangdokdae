@@ -20,11 +20,7 @@ class IssueDocent(Base):
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     teaser: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
     explanation: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=False,
@@ -45,4 +41,3 @@ class IssueDocent(Base):
         nullable=False,
         server_default=text("now()"),
     )
-

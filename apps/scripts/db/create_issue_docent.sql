@@ -3,10 +3,9 @@ CREATE TABLE issue_docent (
   cluster_id BIGINT NOT NULL UNIQUE REFERENCES clusters(id),
   title TEXT NOT NULL,
   teaser TEXT NOT NULL,
-  summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  summary TEXT NOT NULL,
   explanation JSONB NOT NULL DEFAULT '[]'::jsonb,
   quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT now(),
   updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
-

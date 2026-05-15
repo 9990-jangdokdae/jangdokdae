@@ -58,7 +58,7 @@ CREATE TABLE issue_docent (
   cluster_id BIGINT NOT NULL UNIQUE REFERENCES clusters(id),
   title TEXT NOT NULL,
   teaser TEXT NOT NULL,
-  summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  summary TEXT NOT NULL,
   explanation JSONB NOT NULL DEFAULT '[]'::jsonb,
   quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -108,4 +108,3 @@ SELECT COUNT(*) FROM issue_docent;
 ```
 
 `stock_terms`가 비어 있으면 Issue Docent 본문 생성은 가능하지만 용어 매칭과 용어 기반 퀴즈 품질이 낮아질 수 있다.
-

@@ -135,7 +135,7 @@ class IssueDocentRepository:
         cluster_id: int,
         title: str,
         teaser: str,
-        summary: dict[str, Any],
+        summary: str,
         explanation: list[dict[str, Any]],
         quizzes: list[dict[str, Any]],
         force: bool = False,

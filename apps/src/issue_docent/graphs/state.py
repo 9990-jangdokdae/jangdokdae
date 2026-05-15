@@ -1,5 +1,5 @@
 import operator
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +17,7 @@ class IssueDocentPersistPayload(BaseModel):
     cluster_id: int
     title: str = Field(min_length=1)
     teaser: str = Field(min_length=1)
-    summary: dict[str, Any]
+    summary: str = Field(min_length=1)
     explanation: list[dict] = Field(min_length=3, max_length=5)
     quizzes: list[dict] = Field(min_length=2, max_length=2)
 
