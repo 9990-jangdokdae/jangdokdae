@@ -83,49 +83,51 @@
 ## 📁 프로젝트 구조
 
 ```
-jangdokdae/
-├── main.py                              # FastAPI 앱 엔트리포인트
-├── requirements.txt                     # Python 의존성
-├── .env
+jangdokdae-server/
+├── pyproject.toml                       # Python 의존성 및 pytest 설정
+├── uv.lock                              # 잠금 의존성
+├── .env.example                         # 환경 변수 예시
 │
-├── apps/                                # 서비스 코어 (Backend)
-│   ├── api/
-│   │   └── v1/
-│   │       └── endpoints/
-│   │           ├── health.py            # 헬스체크
-│   │           ├── news.py              # 뉴스 조회 / 검색 API
-│   │           ├── analysis.py          # 분석 결과 API
-│   │           └── content.py           # 학습 콘텐츠 API
+├── apps/
+│   ├── main.py                          # FastAPI 앱 엔트리포인트
+│   ├── scripts/
+│   │   ├── collector_pipeline.py        # 데이터 수집 파이프라인 실행
+│   │   ├── generate_issue_docents.py    # Issue Docent 생성 wrapper
+│   │   └── db/
+│   │       └── create_issue_docent.sql  # Parent DB 수동 반영 SQL
 │   │
-│   ├── core/
-│   │   └── config.py                    # 환경변수 및 설정 (pydantic-settings)
-│   │
-│   ├── db/
-│   │   ├── base.py                      
-│   │   └── session.py                   # 비동기 세션 관리
-│   │
-│   ├── models/
-│   │   └── models.py                    # ORM 모델 (뉴스, 분석, 학습콘텐츠)
-│   │
-│   ├── schemas/
-│   │   └── news.py                      
-│   │
-│   ├── services/
-│   │   ├── collector/
-│   │   │   └── news_collector.py        # 뉴스 수집 (Naver API, RSS, DART)
-│   │   ├── embedder/
-│   │   │   └── embedding_service.py     # OpenAI 임베딩 + Qdrant 저장
-│   │   ├── preprocessor/
-│   │   │   └── preprocessor.py          # 텍스트 전처리 + KoNLPy 키워드 추출
-│   │   ├── analyzer/
-│   │   │   └── analyzer_service.py      # Gemini + LangGraph 요약 / 분석
-│   │   └── content_generator/
-│   │       └── content_generator.py     # 학습 콘텐츠 생성 (해설 + 용어 + 퀴즈)
-│   │
-│   └── tasks.py                         # 비동기 파이프라인 정의
+│   └── src/
+│       ├── api/                         # HTTP 라우터
+│       │   ├── auth.py
+│       │   ├── users.py
+│       │   └── issue_docent.py
+│       ├── config/                      # DB, 경로, 외부 설정
+│       ├── dependencies/                # FastAPI 의존성
+│       ├── models/                      # ORM 모델
+│       ├── repositories/                # DB 조회/저장 계층
+│       ├── schemas/                     # API 및 LLM 출력 스키마
+│       ├── services/
+│       │   ├── collector/
+│       │   ├── preprocessor/
+│       │   ├── embedder/
+│       │   ├── extractor/
+│       │   ├── analyzer/
+│       │   ├── auth/
+│       │   └── issue_docent/            # Issue Docent 읽기/생성 서비스
+│       └── issue_docent/                # Issue Docent 전용 도메인
+│           ├── graphs/                  # LangGraph 워크플로우
+│           ├── llm/                     # LLM client 및 prompt loader
+│           ├── prompts/                 # article brief / summary / docent / quiz prompt
+│           └── scripts/                 # 실제 생성 스크립트 구현
 │
-├── docs/                                # ERD, API 문서, 설계 자료
-└── scripts/                             # DB 마이그레이션, 초기 데이터 스크립트
+├── docs/
+│   ├── AUTH_ONBOARDING.md
+│   ├── BE_ARCHITECTURE.md
+│   └── issue_docent_upload_to_neon.md
+│
+└── tests/
+    ├── api/
+    └── unit/
 ```
 
 ---
