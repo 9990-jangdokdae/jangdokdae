@@ -366,6 +366,26 @@ docker-compose up --build
 }
 ```
 
+### 🧭 Issue Docent (`/contents/issue-docent`)
+
+Issue Docent는 클러스터 1개를 하나의 주린이 학습 콘텐츠로 생성하고 조회하는 API입니다.
+
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| `GET` | `/contents/issue-docent?limit=20&offset=0` | Issue Docent 목록 조회 |
+| `GET` | `/contents/issue-docent/{id}` | Issue Docent 상세 조회 |
+
+상세 응답은 구조화된 본문(`explanation`), 원문 기사 목록(`articles`), 저장된 퀴즈(`quizzes`), 본문 용어 매칭 결과(`matched_terms`)를 포함합니다.
+
+생성 스크립트는 다음 wrapper로 실행합니다.
+
+```bash
+uv run python apps/scripts/generate_issue_docents.py --limit 5
+uv run python apps/scripts/generate_issue_docents.py --cluster-id 14 --force
+```
+
+Parent DB에 `issue_docent` 테이블을 수동 생성해야 하는 경우 [docs/issue_docent_upload_to_neon.md](docs/issue_docent_upload_to_neon.md)를 따릅니다.
+
 ---
 
 ## 🔄 데이터 파이프라인

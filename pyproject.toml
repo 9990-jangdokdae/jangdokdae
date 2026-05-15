@@ -1,0 +1,39 @@
+[project]
+name = "jangdokdae-server"
+version = "0.1.0"
+description = "Jangdokdae data pipeline and API server"
+requires-python = "==3.12.*"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-dotenv",
+  "pydantic>=2",
+  "pydantic-settings",
+  "sqlalchemy>=2",
+  "asyncpg",
+  "psycopg[binary]",
+  "pgvector",
+  "greenlet",
+  "httpx",
+  "python-jose[cryptography]",
+  "langchain",
+  "langchain-core",
+  "langgraph",
+  "langsmith",
+  "langchain-google-genai",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
