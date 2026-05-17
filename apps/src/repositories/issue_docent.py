@@ -161,7 +161,6 @@ class IssueDocentRepository:
                     "summary": summary,
                     "explanation": explanation,
                     "quizzes": quizzes,
-                    "updated_at": func.now(),
                 },
             )
         else:

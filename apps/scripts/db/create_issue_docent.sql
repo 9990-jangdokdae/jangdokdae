@@ -6,6 +6,5 @@ CREATE TABLE issue_docent (
   summary TEXT NOT NULL,
   explanation JSONB NOT NULL DEFAULT '[]'::jsonb,
   quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMP NOT NULL DEFAULT now(),
-  updated_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMP NOT NULL DEFAULT now()
 );

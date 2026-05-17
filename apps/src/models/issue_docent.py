@@ -36,8 +36,3 @@ class IssueDocent(Base):
         nullable=False,
         server_default=text("now()"),
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        server_default=text("now()"),
-    )
