@@ -188,8 +188,16 @@ AnalysisResponse 반환
 현재 관련 endpoint:
 
 - `GET /api/v1/analysis/sidebar-context/{cluster_id}`
+- `GET /api/v1/analysis/detail/{cluster_id}`
 
-이 endpoint는 사이드바에 필요한 정형 데이터만 다시 조립해 반환합니다.
+역할:
+
+- `sidebar-context/{cluster_id}`
+  - 관련 기업 주가 / 시장 지표 / 지표 카드처럼
+    사이드바에 필요한 정형 데이터만 다시 조립해 반환
+- `detail/{cluster_id}`
+  - 메인 분석 본문(`analysis_sections`)과 초기 sidebar 조립 결과까지 포함한
+    analyzer 전체 결과 반환
 
 ---
 
@@ -200,6 +208,7 @@ AnalysisResponse 반환
 - `GET /api/v1/analysis/health`
 - `POST /api/v1/analysis/analyze-cluster`
 - `POST /api/v1/analysis/analyze-clusters`
+- `GET /api/v1/analysis/detail/{cluster_id}`
 - `GET /api/v1/analysis/sidebar-context/{cluster_id}`
 
 역할:
@@ -208,6 +217,8 @@ AnalysisResponse 반환
   - cluster payload 또는 단일 cluster 분석
 - `analyze-clusters`
   - batch 분석
+- `detail/{cluster_id}`
+  - 상세 페이지에서 cluster_id 기준으로 메인 분석 섹션을 가져올 때 사용
 - `sidebar-context/{cluster_id}`
   - 상세 페이지 조회 시점에 사이드바용 정형 데이터 갱신
 
@@ -216,6 +227,26 @@ AnalysisResponse 반환
 ## 프론트 연동 기준
 
 프론트는 `jangdokdae-client`에서 연결합니다.
+
+현재 상세 연동 흐름은 아래와 같습니다.
+
+```text
+GET /api/v1/contents/issue-docent/{id}
+        ↓
+요약 본문 / 용어 / 퀴즈 / cluster_id 확보
+        ↓
+GET /api/v1/analysis/detail/{cluster_id}
+        ↓
+analysis_sections 렌더링
+        ↓
+GET /api/v1/analysis/sidebar-context/{cluster_id}
+        ↓
+관련 기업 주가 / 시장 지표 / 지표 카드 갱신
+```
+
+즉 요약/퀴즈는 `issue-docent`,
+분석 본문과 사이드바는 `analyzer`가 맡고,
+프론트 상세 페이지에서 `cluster_id` 기준으로 둘을 붙이는 구조입니다.
 
 상세 페이지 기준 구조:
 
@@ -228,7 +259,8 @@ AnalysisResponse 반환
   - `sidebar_context.key_metrics`
   - `sidebar_context.related_markets`
 
-즉 analyzer는 번역 / 퀴즈를 대체하지 않고, 상세 페이지에 추가되는 구조입니다.
+즉 analyzer는 번역 / 퀴즈를 대체하지 않고,
+상세 페이지에 추가되는 분석 레이어라고 보면 됩니다.
 
 ---
 
@@ -241,6 +273,7 @@ AnalysisResponse 반환
 - 기사 숫자를 우선 보여주고, 비교는 필요한 경우에만 붙인다
 - 설명문 / 지표 카드 fallback은 사용하지 않는다
 - 없으면 안 보여주고, 보이는 것은 기사나 근거 데이터에서 직접 나온 것만 쓴다
+- 프론트 상세는 `cluster_id`를 기준으로 analyzer와 연결한다
 
 ---
 

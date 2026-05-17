@@ -64,6 +64,13 @@ def get_sidebar_context(cluster_id: str) -> SidebarContext:
     return service.build_sidebar_context_from_db(cluster_id)
 
 
+# issue-docent 상세와 별도로, analyzer 본문/초기 sidebar를 cluster_id 기준으로 제공한다.
+@analyzer_router.get("/detail/{cluster_id}", response_model=AnalysisResponse)
+def get_analysis_detail(cluster_id: str) -> AnalysisResponse:
+    service = ClusterAnalyzerService()
+    return service.analyze_cluster_from_db(cluster_id)
+
+
 @analyzer_router.post("/analyze-cluster", response_model=AnalysisResponse)
 def analyze_cluster(request: dict[str, Any]) -> AnalysisResponse:
     service = ClusterAnalyzerService()

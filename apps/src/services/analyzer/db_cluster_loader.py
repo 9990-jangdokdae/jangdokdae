@@ -23,6 +23,9 @@ def _get_engine():
 
 def load_cluster_payload_from_db(cluster_id: str) -> dict:
     with _get_engine().connect() as conn:
+        # 프론트/상세에서 들어오는 식별자를 실제 cluster_id로 정규화한다.
+        resolved_cluster_id = _resolve_cluster_id(conn, cluster_id)
+
         cluster_row = conn.execute(
             text(
                 """
@@ -31,7 +34,7 @@ def load_cluster_payload_from_db(cluster_id: str) -> dict:
                 WHERE id = :cluster_id
                 """
             ),
-            {"cluster_id": cluster_id},
+            {"cluster_id": resolved_cluster_id},
         ).mappings().first()
 
         if not cluster_row:
@@ -47,7 +50,7 @@ def load_cluster_payload_from_db(cluster_id: str) -> dict:
                 ORDER BY ca.similarity_to_centroid DESC NULLS LAST, a.id
                 """
             ),
-            {"cluster_id": cluster_id},
+            {"cluster_id": resolved_cluster_id},
         ).mappings().all()
 
         entity_rows = conn.execute(
@@ -59,10 +62,10 @@ def load_cluster_payload_from_db(cluster_id: str) -> dict:
                 ORDER BY id
                 """
             ),
-            {"cluster_id": cluster_id},
+            {"cluster_id": resolved_cluster_id},
         ).mappings().all()
 
-        market_rows = _load_market_rows(conn, cluster_id)
+        market_rows = _load_market_rows(conn, resolved_cluster_id)
 
     company_names = _collect_names(entity_rows, "company_names")
     sectors = _collect_names(entity_rows, "sectors")
@@ -95,8 +98,8 @@ def load_cluster_payload_from_db(cluster_id: str) -> dict:
 
     payload = {
         "cluster": {
-            "id": _first_text(cluster_row.get("id"), cluster_id),
-            "cluster_id": _first_text(cluster_row.get("id"), cluster_id),
+            "id": _first_text(cluster_row.get("id"), resolved_cluster_id),
+            "cluster_id": _first_text(cluster_row.get("id"), resolved_cluster_id),
             "cluster_seq": _first_text(cluster_row.get("cluster_seq")),
             "size": _first_text(cluster_row.get("size")),
             "sectors": sectors,
@@ -111,6 +114,62 @@ def load_cluster_payload_from_db(cluster_id: str) -> dict:
     }
 
     return payload
+
+
+
+def _resolve_cluster_id(conn, lookup_id: str) -> str:
+    # 유사한 기사를 찾는 게 아니라, DB에 저장된 exact id 관계만 따라간다.
+    normalized_lookup_id = str(lookup_id).strip()
+    if not normalized_lookup_id:
+        raise ValueError("cluster lookup id is required")
+
+    direct_cluster = conn.execute(
+        text(
+            """
+            SELECT id
+            FROM clusters
+            WHERE CAST(id AS TEXT) = :lookup_id
+            LIMIT 1
+            """
+        ),
+        {"lookup_id": normalized_lookup_id},
+    ).scalar()
+    if direct_cluster is not None:
+        return str(direct_cluster)
+
+    representative_cluster = conn.execute(
+        text(
+            """
+            SELECT id
+            FROM clusters
+            WHERE CAST(representative_news_id AS TEXT) = :lookup_id
+            LIMIT 1
+            """
+        ),
+        {"lookup_id": normalized_lookup_id},
+    ).scalar()
+    if representative_cluster is not None:
+        return str(representative_cluster)
+
+    article_cluster = conn.execute(
+        text(
+            """
+            SELECT ca.cluster_id
+            FROM cluster_articles ca
+            JOIN articles a ON a.id = ca.article_id
+            WHERE CAST(ca.article_id AS TEXT) = :lookup_id
+               OR CAST(a.id AS TEXT) = :lookup_id
+               OR CAST(a.article_id AS TEXT) = :lookup_id
+            ORDER BY ca.similarity_to_centroid DESC NULLS LAST, ca.cluster_id
+            LIMIT 1
+            """
+        ),
+        {"lookup_id": normalized_lookup_id},
+    ).scalar()
+    if article_cluster is not None:
+        return str(article_cluster)
+
+    raise ValueError(f"cluster not found for lookup id: {lookup_id}")
 
 
 def _load_market_rows(conn, cluster_id: str) -> list[dict[str, Any]]:
