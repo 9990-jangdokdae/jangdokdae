@@ -123,3 +123,14 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+
+----------------------------------- issue_docent -----------------------------------
+CREATE TABLE IF NOT EXISTS issue_docent (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cluster_id BIGINT NOT NULL UNIQUE REFERENCES clusters(id),
+  title TEXT NOT NULL,
+  teaser TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMP NOT NULL DEFAULT now()
+);
