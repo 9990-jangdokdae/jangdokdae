@@ -16,6 +16,8 @@ class UserResponse(BaseModel):
     id: int
     nickname: str
     provider: str
+    interest_sectors: list[str]
+    interest_companies: list[str]
 
     @field_serializer("id")
     def serialize_id(self, v: int) -> str:
