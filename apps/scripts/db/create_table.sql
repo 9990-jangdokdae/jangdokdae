@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS company_master (
   market     VARCHAR(10) CHECK (market IN ('KOSPI', 'KOSDAQ')),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
-
+CREATE INDEX IF NOT EXISTS idx_company_master_krx_name ON company_master(krx_name);
 
 -----------------------------------dart_financial_statements -----------------------------------
 CREATE TABLE IF NOT EXISTS dart_financial_statements (
@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+CREATE INDEX IF NOT EXISTS idx_users_interest_sectors   ON users USING GIN(interest_sectors);
+CREATE INDEX IF NOT EXISTS idx_users_interest_companies ON users USING GIN(interest_companies);
 
 ----------------------------------- issue_docent -----------------------------------
 CREATE TABLE IF NOT EXISTS issue_docent (
@@ -133,4 +135,15 @@ CREATE TABLE IF NOT EXISTS issue_docent (
   summary TEXT NOT NULL,
   quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+----------------------------------- article_analysis -----------------------------------
+CREATE TABLE IF NOT EXISTS article_analysis (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  cluster_id BIGINT NOT NULL UNIQUE REFERENCES clusters(id),
+  analysis_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  market_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+  sidebar_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP NOT NULL DEFAULT now()
 );
