@@ -25,7 +25,7 @@ Analyzer는 수집된 뉴스 클러스터를 바탕으로,
 
 ```text
 apps/src/api/analyzer.py
-apps/src/models/DTO.py
+apps/src/models/analyzer_dto.py
 apps/src/services/analyzer/analyzer_service.py
 apps/src/services/analyzer/db_cluster_loader.py
 apps/src/services/analyzer/issue_based_analyzer.py
@@ -36,7 +36,7 @@ apps/src/services/analyzer/workflow.py
 
 - `api/analyzer.py`
   - analyzer API 엔드포인트 제공
-- `models/DTO.py`
+- `models/analyzer_dto.py`
   - analyzer 요청 / 응답 스키마 정의
 - `analyzer_service.py`
   - analyzer 진입 서비스
@@ -282,7 +282,7 @@ GET /api/v1/analysis/sidebar-context/{cluster_id}
 현재는 메인 브랜치 병합을 위한 1차 이식 상태이며, 아래는 후속 정리 후보입니다.
 
 - `config/cofig.py` 네이밍 정리
-- `models/DTO.py`를 `schemas`로 옮길지 검토
+- `models/analyzer_dto.py`를 `schemas`로 옮길지 검토
 - `db_cluster_loader.py`를 `repositories` 성격으로 분리할지 검토
 - analyzer API 응답을 `issue-readings` 상세 응답과 어떻게 합칠지 정리
 

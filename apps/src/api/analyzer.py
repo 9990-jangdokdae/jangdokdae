@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from apps.src.models.DTO import AnalysisResponse, SidebarContext
+from apps.src.models.analyzer_dto import AnalysisResponse, SidebarContext
 from apps.src.services.analyzer.analyzer_service import ClusterAnalyzerService
 
 router = APIRouter()

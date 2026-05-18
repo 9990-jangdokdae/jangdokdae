@@ -6,7 +6,7 @@ import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from apps.src.config import cofig
-from apps.src.models.DTO import (
+from apps.src.models.analyzer_dto import (
     AnalysisSection,
     AnalysisRequest,
     AnalysisResponse,

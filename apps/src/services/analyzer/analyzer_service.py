@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.src.models.DTO import (
+from apps.src.models.analyzer_dto import (
     AnalysisRequest,
     AnalysisResponse,
     ArticleMetadata,

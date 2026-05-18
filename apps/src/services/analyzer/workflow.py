@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from apps.src.models.DTO import AnalysisRequest, AnalysisResponse
+from apps.src.models.analyzer_dto import AnalysisRequest, AnalysisResponse
 
 
 # 읽는 순서:
