@@ -180,24 +180,26 @@ AnalysisResponse 반환
 
 현재 원칙:
 
-- 분석 본문은 저장형 성격
-- `pykrx` 숫자는 조회형 성격
-
-즉 사용자 상세 페이지 조회 시점에 `pykrx` 값이 다시 반영되도록 구성합니다.
+- 분석 결과는 Neon DB `article_analysis` 테이블에 저장형으로 관리
+- Gemini 분석은 저장 단계에서만 수행
+- 메인 분석 본문은 저장된 결과를 조회해 반환
+- 사이드바 숫자 데이터는 조회 시점 기준으로 다시 계산해 반환
+- 새 `issue_docent`가 저장될 때 같은 `cluster_id`의 analyzer 결과도 함께 저장
 
 현재 관련 endpoint:
 
 - `GET /api/v1/analysis/sidebar-context/{cluster_id}`
 - `GET /api/v1/analysis/detail/{cluster_id}`
+- `POST /api/v1/analysis/persist/{cluster_id}`
 
 역할:
 
 - `sidebar-context/{cluster_id}`
-  - 관련 기업 주가 / 시장 지표 / 지표 카드처럼
-    사이드바에 필요한 정형 데이터만 다시 조립해 반환
+  - 저장된 analyzer 결과를 기준으로 하되, 주가/등락률/시장 지표 같은 숫자 데이터는 조회 시점 기준으로 다시 계산해 반환
 - `detail/{cluster_id}`
-  - 메인 분석 본문(`analysis_sections`)과 초기 sidebar 조립 결과까지 포함한
-    analyzer 전체 결과 반환
+  - 저장된 analyzer 결과만 조회해 반환
+- `persist/{cluster_id}`
+  - Gemini 분석을 수행하고 `article_analysis` 테이블에 저장
 
 ---
 
@@ -208,6 +210,7 @@ AnalysisResponse 반환
 - `GET /api/v1/analysis/health`
 - `POST /api/v1/analysis/analyze-cluster`
 - `POST /api/v1/analysis/analyze-clusters`
+- `POST /api/v1/analysis/persist/{cluster_id}`
 - `GET /api/v1/analysis/detail/{cluster_id}`
 - `GET /api/v1/analysis/sidebar-context/{cluster_id}`
 
@@ -217,10 +220,18 @@ AnalysisResponse 반환
   - cluster payload 또는 단일 cluster 분석
 - `analyze-clusters`
   - batch 분석
+- `persist/{cluster_id}`
+  - cluster_id 기준으로 Gemini 분석을 실행하고 결과를 DB에 저장
 - `detail/{cluster_id}`
-  - 상세 페이지에서 cluster_id 기준으로 메인 분석 섹션을 가져올 때 사용
+  - 상세 페이지에서 저장된 메인 분석 섹션을 가져올 때 사용
 - `sidebar-context/{cluster_id}`
-  - 상세 페이지 조회 시점에 사이드바용 정형 데이터 갱신
+  - 상세 페이지에서 실시간 수치가 반영된 사이드바 데이터를 가져올 때 사용
+
+자동 저장 기준:
+
+- `issue_docent` 생성 서비스가 `issue_docent`를 저장한 직후
+- 같은 `cluster_id`로 analyzer를 실행
+- 결과를 `article_analysis` 테이블에 함께 저장
 
 ---
 
@@ -241,8 +252,10 @@ analysis_sections 렌더링
         ↓
 GET /api/v1/analysis/sidebar-context/{cluster_id}
         ↓
-관련 기업 주가 / 시장 지표 / 지표 카드 갱신
+실시간 관련 기업 / 시장 지표 / 지표 카드 조회
 ```
+
+저장 시점은 프론트 상세 진입 시점이 아니라, `issue_docent` 생성 시점입니다.
 
 즉 요약/퀴즈는 `issue-docent`,
 분석 본문과 사이드바는 `analyzer`가 맡고,

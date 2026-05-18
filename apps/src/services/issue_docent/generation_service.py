@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 
+from apps.src.repositories.article_analysis import ArticleAnalysisRepository
 from apps.src.repositories.issue_docent import IssueDocentRepository
 from apps.src.issue_docent.graphs.graph import build_issue_docent_graph
 from apps.src.issue_docent.graphs.state import IssueDocentPersistPayload
 from apps.src.issue_docent.llm.client import IssueDocentLLMClient
+from apps.src.services.analyzer.analyzer_service import ClusterAnalyzerService
 
 
 @dataclass(frozen=True)
@@ -19,9 +21,11 @@ class IssueDocentGenerationService:
         self,
         repository: IssueDocentRepository,
         llm_client: IssueDocentLLMClient | None = None,
+        analyzer_service: ClusterAnalyzerService | None = None,
     ) -> None:
         self.repository = repository
         self.graph = build_issue_docent_graph(llm_client)
+        self.analyzer_service = analyzer_service or ClusterAnalyzerService()
 
     async def generate_for_cluster(
         self,
@@ -52,6 +56,12 @@ class IssueDocentGenerationService:
             summary=payload.summary,
             quizzes=payload.quizzes,
             force=force,
+        )
+
+        # issue-docent가 준비되는 시점에 analyzer 결과도 같은 cluster_id로 함께 저장한다.
+        await self.analyzer_service.persist_analysis_from_db(
+            str(payload.cluster_id),
+            ArticleAnalysisRepository(self.repository.session),
         )
         await self.repository.session.commit()
 

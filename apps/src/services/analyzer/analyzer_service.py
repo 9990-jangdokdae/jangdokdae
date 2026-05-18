@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from apps.src.models.analyzer_dto import (
@@ -7,11 +8,13 @@ from apps.src.models.analyzer_dto import (
     AnalysisResponse,
     ArticleMetadata,
     CompanyContextRecord,
+    RelatedMarketCard,
     MarketIndicatorRecord,
     SectorContextRecord,
     SidebarContext,
     StructuredContext,
 )
+from apps.src.repositories.article_analysis import ArticleAnalysisRepository
 from apps.src.services.analyzer.db_cluster_loader import load_cluster_payload_from_db
 from apps.src.services.analyzer.issue_based_analyzer import IssueBasedAnalyzerService
 from apps.src.services.analyzer.workflow import ClusterAnalysisWorkflow
@@ -68,6 +71,68 @@ class ClusterAnalyzerService:
         """클러스터 입력을 workflow 순서대로 돌려 분석 결과 리스트를 만든다."""
         workflow = ClusterAnalysisWorkflow(self)
         return workflow.run(payload)
+
+    async def get_persisted_analysis(
+        self,
+        cluster_id: str,
+        repository: ArticleAnalysisRepository,
+    ) -> AnalysisResponse | None:
+        """이미 저장된 analyzer 결과만 조회한다."""
+        return await repository.get_analysis_result(cluster_id)
+
+    async def get_persisted_sidebar_context(
+        self,
+        cluster_id: str,
+        repository: ArticleAnalysisRepository,
+    ) -> SidebarContext | None:
+        result = await self.get_persisted_analysis(cluster_id, repository)
+        if result is None:
+            return None
+        return result.sidebar_context
+
+    async def get_live_sidebar_context(
+        self,
+        cluster_id: str,
+        repository: ArticleAnalysisRepository,
+    ) -> SidebarContext | None:
+        """저장된 분석 결과가 있을 때만, 숫자성 sidebar 데이터는 조회 시점 기준으로 다시 계산한다."""
+        persisted = await self.get_persisted_analysis(cluster_id, repository)
+        if persisted is None:
+            return None
+
+        live_sidebar = await asyncio.to_thread(self.build_sidebar_context_from_db, cluster_id)
+        live_sidebar.related_markets = self._merge_market_summaries(
+            live_sidebar.related_markets,
+            persisted.sidebar_context.related_markets,
+        )
+        return live_sidebar
+
+    async def persist_analysis_from_db(
+        self,
+        cluster_id: str,
+        repository: ArticleAnalysisRepository,
+    ) -> AnalysisResponse:
+        """Gemini 분석을 수행하고 결과를 article_analysis 테이블에 저장한다."""
+        generated = await asyncio.to_thread(self.analyze_cluster_from_db, cluster_id)
+        refreshed_sidebar = await asyncio.to_thread(self.build_sidebar_context_from_db, cluster_id)
+        persisted_result = generated.model_copy(update={"sidebar_context": refreshed_sidebar})
+        await repository.upsert_analysis_result(cluster_id=cluster_id, result=persisted_result)
+        return persisted_result
+
+    def _merge_market_summaries(
+        self,
+        live_markets: list[RelatedMarketCard],
+        persisted_markets: list[RelatedMarketCard],
+    ) -> list[RelatedMarketCard]:
+        summary_by_name = {market.name: market.summary for market in persisted_markets if market.name}
+        merged: list[RelatedMarketCard] = []
+        for market in live_markets:
+            merged.append(
+                market.model_copy(
+                    update={"summary": market.summary or summary_by_name.get(market.name)}
+                )
+            )
+        return merged
 
 
     def to_analysis_requests(self, payload: dict[str, Any] | list[dict[str, Any]]) -> list[AnalysisRequest]:
