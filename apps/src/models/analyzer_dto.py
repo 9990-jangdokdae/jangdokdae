@@ -91,6 +91,7 @@ class RelatedMarketCard(BaseModel):
     name: str
     value: str | None = None
     change_pct: str | None = None
+    summary: str | None = None
 
 
 class KeyMetric(BaseModel):

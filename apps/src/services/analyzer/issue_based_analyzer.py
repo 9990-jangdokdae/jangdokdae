@@ -210,6 +210,7 @@ class IssueBasedAnalyzerService:
                 name=indicator.name,
                 value=indicator.value,
                 change_pct=indicator.change,
+                summary=None,
             )
             for indicator in article.context.market_indicators
         ]
@@ -391,6 +392,7 @@ class IssueBasedAnalyzerService:
                     name=indicator.name,
                     value=indicator.value,
                     change_pct=indicator.change,
+                    summary=None,
                 )
 
         indicator = article.context.market_indicators[0]
@@ -398,6 +400,7 @@ class IssueBasedAnalyzerService:
             name=indicator.name,
             value=indicator.value,
             change_pct=indicator.change,
+            summary=None,
         )
 
     def _select_financial_anchor_company(self, article: AnalysisRequest):
