@@ -5,11 +5,13 @@ services:
     plan: starter
     region: singapore
     buildCommand: pip install uv && uv sync --frozen --no-dev
-    startCommand: uvicorn apps.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn apps.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: APP_ENV
+        value: production
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET

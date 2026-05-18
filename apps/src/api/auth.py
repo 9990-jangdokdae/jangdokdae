@@ -52,25 +52,29 @@ async def _upsert_user(session: AsyncSession, user_info: dict) -> User:
 
 
 def _set_auth_cookie(response: Response, token: str) -> None:
-    """JWT를 httpOnly 쿠키로 설정한다. 프로덕션에서는 secure=True."""
+    """JWT를 httpOnly 쿠키로 설정한다.
+    프로덕션(크로스도메인)에서는 SameSite=None + Secure=True 필수.
+    SameSite=Lax는 크로스사이트 fetch/XHR에서 쿠키를 차단하므로 사용 불가."""
+    is_prod = _is_production()
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         max_age=COOKIE_MAX_AGE,
-        samesite="lax",
-        secure=_is_production(),
+        samesite="none" if is_prod else "lax",
+        secure=is_prod,  # SameSite=None은 Secure=True 없으면 브라우저가 거부
     )
 
 
 def _delete_auth_cookie(response: Response) -> None:
     """_set_auth_cookie와 동일한 속성으로 쿠키를 삭제한다.
     속성 불일치 시 브라우저가 삭제를 무시하므로 동일 속성 필수."""
+    is_prod = _is_production()
     response.delete_cookie(
         key=COOKIE_NAME,
         httponly=True,
-        samesite="lax",
-        secure=_is_production(),
+        samesite="none" if is_prod else "lax",
+        secure=is_prod,
     )
 
 
