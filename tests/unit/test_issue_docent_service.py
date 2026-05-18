@@ -42,10 +42,10 @@ class FakeIssueDocentRepository:
             cluster_id=10,
             title="삼성전자 투자 확대",
             teaser="삼성전자 관련 이슈",
+            summary="영업이익 수치가 기사에 포함됐다.\n\n삼성전자가 투자 계획을 밝혔다.",
             extracted_company_names=["삼성전자"],
             article_count=2,
             created_at=datetime(2026, 5, 14, 9, 0, 0),
-            explanation=[],
             quizzes=[],
         )
 
@@ -104,3 +104,33 @@ async def test_get_issue_docent_builds_sector_companies_for_detail():
 
     assert response is not None
     assert response.sector_companies[0].companies[0].company_id == 1
+
+
+@pytest.mark.asyncio
+async def test_get_issue_docent_enriches_summary_paragraphs_with_terms():
+    repository = FakeIssueDocentRepository()
+    service = IssueDocentReadService(repository)
+    repository.get_stock_terms = _fake_stock_terms
+
+    response = await service.get_issue_docent(1)
+
+    assert response is not None
+    assert [paragraph.text for paragraph in response.summary.paragraphs] == [
+        "영업이익 수치가 기사에 포함됐다.",
+        "삼성전자가 투자 계획을 밝혔다.",
+    ]
+    assert response.summary.paragraphs[0].matched_terms[0].term == "영업이익"
+
+
+async def _fake_stock_terms():
+    from apps.src.services.issue_docent.term_matcher import StockTermForMatch
+
+    return [
+        StockTermForMatch(
+            id=1,
+            term="영업이익",
+            aliases=[],
+            category="재무제표",
+            definition="기업의 영업활동 이익",
+        )
+    ]

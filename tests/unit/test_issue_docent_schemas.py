@@ -1,81 +1,45 @@
 import pytest
 from pydantic import ValidationError
 
-from apps.src.schemas.issue_docent_llm import IssueDocentOutput, QuizOutput
+from apps.src.schemas.issue_docent_llm import ArticleBriefOutput, IssueDocentContentOutput, QuizOutput
 
 
-def test_issue_docent_output_accepts_required_sections():
-    output = IssueDocentOutput.model_validate(
+def test_article_brief_output_keeps_only_identity_order_and_brief():
+    output = ArticleBriefOutput.model_validate(
         {
-            "explanation": [
-                {
-                    "section_type": "what_happened",
-                    "title": "무슨 일이 있었나",
-                    "paragraphs": ["첫 번째 문단"],
-                },
-                {
-                    "section_type": "why_it_matters",
-                    "title": "왜 중요한가",
-                    "paragraphs": ["두 번째 문단"],
-                },
-                {
-                    "section_type": "wrap_up",
-                    "title": "마무리",
-                    "paragraphs": ["세 번째 문단"],
-                },
-            ]
+            "article_pk": 1,
+            "article_id": "a1",
+            "article_order": 0,
+            "brief": "기사 핵심 내용",
         }
     )
 
-    assert len(output.explanation) == 3
+    assert set(output.model_fields_set) == {"article_pk", "article_id", "article_order", "brief"}
+    assert "key_facts" not in ArticleBriefOutput.model_fields
+    assert "source_views" not in ArticleBriefOutput.model_fields
 
 
-def test_issue_docent_output_rejects_missing_required_section():
+def test_issue_docent_content_output_accepts_title_teaser_and_summary_only():
+    output = IssueDocentContentOutput.model_validate(
+        {
+            "title": "삼성전자, 반도체 투자 발표",
+            "teaser": "삼성전자가 반도체 투자 계획을 밝혔다.",
+            "summary": "삼성전자가 2026년 반도체 투자 계획을 발표했다.",
+        }
+    )
+
+    assert output.title == "삼성전자, 반도체 투자 발표"
+    assert "explanation" not in IssueDocentContentOutput.model_fields
+    assert "summary_points" not in IssueDocentContentOutput.model_fields
+
+
+def test_issue_docent_content_output_rejects_empty_summary():
     with pytest.raises(ValidationError):
-        IssueDocentOutput.model_validate(
+        IssueDocentContentOutput.model_validate(
             {
-                "explanation": [
-                    {
-                        "section_type": "what_happened",
-                        "title": "무슨 일이 있었나",
-                        "paragraphs": ["첫 번째 문단"],
-                    },
-                    {
-                        "section_type": "expert_view",
-                        "title": "전문가 관점",
-                        "paragraphs": ["두 번째 문단"],
-                    },
-                    {
-                        "section_type": "wrap_up",
-                        "title": "마무리",
-                        "paragraphs": ["세 번째 문단"],
-                    },
-                ]
-            }
-        )
-
-
-def test_issue_docent_output_rejects_more_than_two_paragraphs_per_section():
-    with pytest.raises(ValidationError):
-        IssueDocentOutput.model_validate(
-            {
-                "explanation": [
-                    {
-                        "section_type": "what_happened",
-                        "title": "무슨 일이 있었나",
-                        "paragraphs": ["1", "2", "3"],
-                    },
-                    {
-                        "section_type": "why_it_matters",
-                        "title": "왜 중요한가",
-                        "paragraphs": ["두 번째 문단"],
-                    },
-                    {
-                        "section_type": "wrap_up",
-                        "title": "마무리",
-                        "paragraphs": ["세 번째 문단"],
-                    },
-                ]
+                "title": "제목",
+                "teaser": "티저",
+                "summary": "",
             }
         )
 

@@ -46,9 +46,17 @@ WHERE table_schema = 'public'
 ORDER BY table_name;
 ```
 
-`issue_docent`가 이미 있으면 바로 생성하지 않는다. 기존 용도와 데이터를 확인한 뒤 유지, 백업 후 교체, 또는 별도 migration 계획 중 하나를 선택한다.
+`issue_docent`가 이미 있으면 바로 생성하지 않는다. 이번 구조는 기존 `explanation` 컬럼을 제거하고 `summary`를 최종 본문 원천으로 사용한다. 기존 데이터를 유지할 필요가 없으면 테이블을 삭제한 뒤 새 기준 SQL로 다시 생성한다.
 
-## 3. 테이블 생성
+## 3. 기존 테이블 삭제
+
+기존 `issue_docent` 데이터를 보존해야 하면 이 단계 전에 백업한다. 현재 작업에서는 사용자가 직접 기존 테이블을 삭제한 뒤 새로 생성한다.
+
+```sql
+DROP TABLE IF EXISTS issue_docent;
+```
+
+## 4. 테이블 생성
 
 기준 파일: `apps/scripts/db/create_issue_docent.sql`
 
@@ -59,7 +67,6 @@ CREATE TABLE issue_docent (
   title TEXT NOT NULL,
   teaser TEXT NOT NULL,
   summary TEXT NOT NULL,
-  explanation JSONB NOT NULL DEFAULT '[]'::jsonb,
   quizzes JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT now()
 );
@@ -67,9 +74,13 @@ CREATE TABLE issue_docent (
 
 현재 정책은 클러스터 1개가 Issue Docent 콘텐츠 1개를 가진다는 것이다. 따라서 `cluster_id`는 `UNIQUE`로 둔다.
 
+`summary`는 상세 본문의 원천이다. API 서버는 `summary`를 문단 단위로 변환하고 `stock_terms`를 동적 매칭해 프론트에 `matched_terms`를 붙여 내려준다. 용어 매칭 결과는 DB에 저장하지 않는다.
+
+`quizzes`는 저장된 퀴즈 배열이다. 퀴즈 생성은 최종 `summary`와 `stock_terms` 매칭 후보를 입력으로 사용한다.
+
 향후 프롬프트 버전 비교, A/B 테스트, 생성 이력 저장이 필요하면 `version` 컬럼을 추가하고 unique 기준을 `(cluster_id, version)`으로 변경하는 별도 migration을 설계한다.
 
-## 4. 구조 검증
+## 5. 구조 검증
 
 ```sql
 SELECT column_name, data_type, is_nullable
@@ -92,7 +103,9 @@ WHERE tc.table_schema = 'public'
 ORDER BY tc.constraint_type, tc.constraint_name;
 ```
 
-## 5. API/생성 전 확인
+기대 컬럼은 `id`, `cluster_id`, `title`, `teaser`, `summary`, `quizzes`, `created_at`이다. `explanation` 컬럼은 더 이상 사용하지 않는다.
+
+## 6. API/생성 전 확인
 
 ```sql
 SELECT COUNT(*) FROM clusters;

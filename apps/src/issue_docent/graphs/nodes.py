@@ -19,34 +19,26 @@ def make_article_brief_node(llm_client: IssueDocentLLMClient):
     return article_brief_node
 
 
-def make_cluster_summary_node(llm_client: IssueDocentLLMClient):
-    async def cluster_summary_node(state: IssueDocentState) -> dict:
+def make_issue_docent_content_node(llm_client: IssueDocentLLMClient):
+    async def issue_docent_content_node(state: IssueDocentState) -> dict:
         article_briefs = sorted(
             state["article_briefs"],
             key=lambda brief: brief.article_order,
         )
-        cluster_summary = await llm_client.generate_cluster_summary(
+        content = await llm_client.generate_issue_docent_content(
             cluster=state["cluster"],
             article_briefs=article_briefs,
         )
-        return {"cluster_summary": cluster_summary}
+        return {"issue_docent_content": content}
 
-    return cluster_summary_node
-
-
-def make_issue_docent_node(llm_client: IssueDocentLLMClient):
-    async def issue_docent_node(state: IssueDocentState) -> dict:
-        issue_docent = await llm_client.generate_issue_docent(state["cluster_summary"])
-        return {"issue_docent": issue_docent}
-
-    return issue_docent_node
+    return issue_docent_content_node
 
 
 def make_quiz_node(llm_client: IssueDocentLLMClient):
     async def quiz_node(state: IssueDocentState) -> dict:
         term_candidates = _build_quiz_term_candidates(state)
         quizzes = await llm_client.generate_quizzes(
-            issue_docent=state["issue_docent"],
+            summary=state["issue_docent_content"].summary,
             term_candidates=term_candidates,
         )
         return {
@@ -58,8 +50,7 @@ def make_quiz_node(llm_client: IssueDocentLLMClient):
 
 
 def validate_before_persist(state: IssueDocentState) -> dict:
-    cluster_summary = state["cluster_summary"]
-    issue_docent = state["issue_docent"]
+    content = state["issue_docent_content"]
     term_candidates = state.get("quiz_term_candidates", [])
     quizzes = QuizOutput.model_validate_with_term_candidates(
         state["quizzes"].model_dump(),
@@ -67,10 +58,9 @@ def validate_before_persist(state: IssueDocentState) -> dict:
     )
     payload = IssueDocentPersistPayload(
         cluster_id=state["cluster"].cluster_id,
-        title=cluster_summary.title,
-        teaser=cluster_summary.teaser,
-        summary=cluster_summary.summary,
-        explanation=[section.model_dump() for section in issue_docent.explanation],
+        title=content.title,
+        teaser=content.teaser,
+        summary=content.summary,
         quizzes=_assign_quiz_ids(quizzes),
     )
     return {"persist_payload": payload}
@@ -82,18 +72,16 @@ def _build_quiz_term_candidates(state: IssueDocentState) -> list[dict]:
         return []
 
     candidates_by_id: dict[int, dict] = {}
-    for section in state["issue_docent"].explanation:
-        for paragraph in section.paragraphs:
-            for match in match_terms(paragraph, stock_terms):
-                candidates_by_id.setdefault(
-                    match.term_id,
-                    {
-                        "term_id": match.term_id,
-                        "term": match.term,
-                        "category": match.category,
-                        "definition": match.definition,
-                    },
-                )
+    for match in match_terms(state["issue_docent_content"].summary, stock_terms):
+        candidates_by_id.setdefault(
+            match.term_id,
+            {
+                "term_id": match.term_id,
+                "term": match.term,
+                "category": match.category,
+                "definition": match.definition,
+            },
+        )
 
     return list(candidates_by_id.values())
 

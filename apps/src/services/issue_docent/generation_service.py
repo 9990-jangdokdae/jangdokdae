@@ -50,7 +50,6 @@ class IssueDocentGenerationService:
             title=payload.title,
             teaser=payload.teaser,
             summary=payload.summary,
-            explanation=payload.explanation,
             quizzes=payload.quizzes,
             force=force,
         )

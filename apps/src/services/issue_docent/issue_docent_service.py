@@ -1,13 +1,13 @@
 from apps.src.repositories.issue_docent import IssueDocentRepository
 from apps.src.schemas.issue_docent import (
-    ExplanationParagraph,
-    ExplanationSection,
     IssueDocentDetailResponse,
     IssueDocentListItem,
     IssueDocentListResponse,
     IssueDocentQuiz,
     MatchedTerm,
     SourceArticle,
+    SummaryContent,
+    SummaryParagraph,
 )
 from apps.src.services.issue_docent.sector_companies import build_sector_companies
 from apps.src.services.issue_docent.term_matcher import StockTermForMatch, match_terms
@@ -70,7 +70,7 @@ class IssueDocentReadService:
                 candidates,
             ),
             article_count=record.article_count,
-            explanation=_enrich_explanation(record.explanation, terms),
+            summary=_enrich_summary(record.summary, terms),
             articles=[
                 SourceArticle.model_validate(article, from_attributes=True)
                 for article in articles
@@ -86,38 +86,40 @@ class IssueDocentReadService:
         return _STOCK_TERMS_CACHE
 
 
-def _enrich_explanation(
-    explanation: list[dict],
+def _enrich_summary(
+    summary: str,
     terms: list[StockTermForMatch],
-) -> list[ExplanationSection]:
-    sections: list[ExplanationSection] = []
-    for section in explanation:
-        paragraphs = [
-            ExplanationParagraph(
+) -> SummaryContent:
+    return SummaryContent(
+        paragraphs=[
+            SummaryParagraph(
                 text=paragraph,
-                matched_terms=[
-                    MatchedTerm(
-                        term_id=match.term_id,
-                        term=match.term,
-                        category=match.category,
-                        definition=match.definition,
-                        start=match.start,
-                        end=match.end,
-                    )
-                    for match in match_terms(paragraph, terms)
-                ],
+                matched_terms=_matched_terms_for_paragraph(paragraph, terms),
             )
-            for paragraph in section.get("paragraphs", [])
-            if isinstance(paragraph, str)
+            for paragraph in _split_summary_paragraphs(summary)
         ]
-        sections.append(
-            ExplanationSection(
-                section_type=section.get("section_type", ""),
-                title=section.get("title", ""),
-                paragraphs=paragraphs,
-            )
+    )
+
+
+def _split_summary_paragraphs(summary: str) -> list[str]:
+    return [paragraph.strip() for paragraph in summary.split("\n\n") if paragraph.strip()]
+
+
+def _matched_terms_for_paragraph(
+    paragraph: str,
+    terms: list[StockTermForMatch],
+) -> list[MatchedTerm]:
+    return [
+        MatchedTerm(
+            term_id=match.term_id,
+            term=match.term,
+            category=match.category,
+            definition=match.definition,
+            start=match.start,
+            end=match.end,
         )
-    return sections
+        for match in match_terms(paragraph, terms)
+    ]
 
 
 def _unique_company_names(records: list) -> list[str]:

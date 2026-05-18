@@ -6,6 +6,7 @@ from apps.src.models.stock_term import StockTerm
 
 def test_issue_docent_summary_uses_text_column():
     assert isinstance(IssueDocent.__table__.c.summary.type, Text)
+    assert "explanation" not in IssueDocent.__table__.c
 
 
 def test_stock_term_timestamps_keep_timezone_information():

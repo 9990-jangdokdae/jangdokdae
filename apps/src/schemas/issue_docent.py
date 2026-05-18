@@ -13,15 +13,13 @@ class MatchedTerm(BaseModel):
     end: int
 
 
-class ExplanationParagraph(BaseModel):
+class SummaryParagraph(BaseModel):
     text: str
     matched_terms: list[MatchedTerm] = []
 
 
-class ExplanationSection(BaseModel):
-    section_type: str
-    title: str
-    paragraphs: list[ExplanationParagraph]
+class SummaryContent(BaseModel):
+    paragraphs: list[SummaryParagraph]
 
 
 class SourceArticle(BaseModel):
@@ -76,7 +74,7 @@ class IssueDocentDetailResponse(BaseModel):
     teaser: str
     sector_companies: list[SectorCompanies]
     article_count: int
-    explanation: list[ExplanationSection]
+    summary: SummaryContent
     articles: list[SourceArticle]
     quizzes: list[IssueDocentQuiz]
     created_at: datetime

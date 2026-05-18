@@ -37,7 +37,7 @@ class IssueDocentListRecord:
 
 @dataclass(frozen=True)
 class IssueDocentDetailRecord(IssueDocentListRecord):
-    explanation: list[dict[str, Any]]
+    summary: str
     quizzes: list[dict[str, Any]]
 
 
@@ -136,7 +136,6 @@ class IssueDocentRepository:
         title: str,
         teaser: str,
         summary: str,
-        explanation: list[dict[str, Any]],
         quizzes: list[dict[str, Any]],
         force: bool = False,
     ) -> int | None:
@@ -147,7 +146,6 @@ class IssueDocentRepository:
                 title=title,
                 teaser=teaser,
                 summary=summary,
-                explanation=explanation,
                 quizzes=quizzes,
             )
             .returning(IssueDocent.id)
@@ -159,7 +157,6 @@ class IssueDocentRepository:
                     "title": title,
                     "teaser": teaser,
                     "summary": summary,
-                    "explanation": explanation,
                     "quizzes": quizzes,
                 },
             )
@@ -185,7 +182,7 @@ class IssueDocentRepository:
         return [_list_record_from_row(row) for row in rows], int(total or 0)
 
     async def get_issue_docent(self, issue_docent_id: int) -> IssueDocentDetailRecord | None:
-        stmt = _issue_docent_base_select(IssueDocent.explanation, IssueDocent.quizzes).where(
+        stmt = _issue_docent_base_select(IssueDocent.summary, IssueDocent.quizzes).where(
             IssueDocent.id == issue_docent_id
         )
         row = (await self.session.execute(stmt)).one_or_none()
@@ -312,6 +309,6 @@ def _detail_record_from_row(row: Any) -> IssueDocentDetailRecord:
         extracted_company_names=list(row.extracted_company_names or []),
         article_count=row.article_count,
         created_at=row.created_at,
-        explanation=list(row.explanation or []),
+        summary=row.summary,
         quizzes=list(row.quizzes or []),
     )

@@ -10,8 +10,7 @@ from apps.src.repositories.issue_docent import ArticleForGeneration, ClusterGene
 from apps.src.issue_docent.llm.prompt_loader import load_prompt
 from apps.src.schemas.issue_docent_llm import (
     ArticleBriefOutput,
-    ClusterSummaryOutput,
-    IssueDocentOutput,
+    IssueDocentContentOutput,
     QuizOutput,
 )
 
@@ -38,12 +37,12 @@ class IssueDocentLLMClient:
             payload={"article": _jsonable(asdict(article))},
         )
 
-    async def generate_cluster_summary(
+    async def generate_issue_docent_content(
         self,
         *,
         cluster: ClusterGenerationContext,
         article_briefs: list[ArticleBriefOutput],
-    ) -> ClusterSummaryOutput:
+    ) -> IssueDocentContentOutput:
         payload = {
             "cluster": {
                 "cluster_id": cluster.cluster_id,
@@ -69,32 +68,22 @@ class IssueDocentLLMClient:
             "article_briefs": [brief.model_dump() for brief in article_briefs],
         }
         return await self._structured_invoke(
-            schema=ClusterSummaryOutput,
+            schema=IssueDocentContentOutput,
             prompt_name="cluster_summary.md",
             payload=payload,
-        )
-
-    async def generate_issue_docent(
-        self,
-        cluster_summary: ClusterSummaryOutput,
-    ) -> IssueDocentOutput:
-        return await self._structured_invoke(
-            schema=IssueDocentOutput,
-            prompt_name="issue_docent.md",
-            payload={"cluster_summary": cluster_summary.model_dump()},
         )
 
     async def generate_quizzes(
         self,
         *,
-        issue_docent: IssueDocentOutput,
+        summary: str,
         term_candidates: list[dict[str, Any]],
     ) -> QuizOutput:
         return await self._structured_invoke(
             schema=QuizOutput,
             prompt_name="quiz.md",
             payload={
-                "explanation": issue_docent.model_dump()["explanation"],
+                "summary": summary,
                 "term_candidates": term_candidates,
             },
             validation_context={"has_term_candidates": bool(term_candidates)},

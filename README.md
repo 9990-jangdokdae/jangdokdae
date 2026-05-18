@@ -117,7 +117,7 @@ jangdokdae-server/
 │       └── issue_docent/                # Issue Docent 전용 도메인
 │           ├── graphs/                  # LangGraph 워크플로우
 │           ├── llm/                     # LLM client 및 prompt loader
-│           ├── prompts/                 # article brief / summary / docent / quiz prompt
+│           ├── prompts/                 # article brief / summary / quiz prompt
 │           └── scripts/                 # 실제 생성 스크립트 구현
 │
 ├── docs/
@@ -353,7 +353,7 @@ Issue Docent는 클러스터 1개를 하나의 주린이 학습 콘텐츠로 생
 | `GET` | `/contents/issue-docent?limit=20&offset=0` | Issue Docent 목록 조회 |
 | `GET` | `/contents/issue-docent/{id}` | Issue Docent 상세 조회 |
 
-상세 응답은 구조화된 본문(`explanation`), 원문 기사 목록(`articles`), 저장된 퀴즈(`quizzes`), 본문 용어 매칭 결과(`matched_terms`)를 포함합니다.
+상세 응답은 본문(`summary`), 원문 기사 목록(`articles`), 저장된 퀴즈(`quizzes`), 본문 용어 매칭 결과(`matched_terms`)를 포함합니다. `summary`는 DB에 `TEXT`로 저장되며 API 서버가 문단별 응답 객체로 변환하고 `stock_terms`를 동적으로 매칭합니다.
 
 생성 스크립트는 다음 wrapper로 실행합니다.
 

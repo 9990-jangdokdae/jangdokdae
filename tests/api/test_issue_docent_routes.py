@@ -5,8 +5,6 @@ from fastapi.testclient import TestClient
 from apps.src.api.issue_docent import get_issue_docent_service
 from apps.main import create_app
 from apps.src.schemas.issue_docent import (
-    ExplanationParagraph,
-    ExplanationSection,
     IssueDocentDetailResponse,
     IssueDocentListItem,
     IssueDocentListResponse,
@@ -15,6 +13,8 @@ from apps.src.schemas.issue_docent import (
     SectorCompanies,
     SectorCompany,
     SourceArticle,
+    SummaryContent,
+    SummaryParagraph,
 )
 
 
@@ -69,27 +69,23 @@ class FakeIssueDocentService:
                 )
             ],
             article_count=2,
-            explanation=[
-                ExplanationSection(
-                    section_type="what_happened",
-                    title="무슨 일이 있었나",
-                    paragraphs=[
-                        ExplanationParagraph(
-                            text="영업이익 수치가 기사에 포함됐다.",
-                            matched_terms=[
-                                MatchedTerm(
-                                    term_id=1,
-                                    term="영업이익",
-                                    category="재무제표",
-                                    definition="",
-                                    start=0,
-                                    end=4,
-                                )
-                            ],
-                        )
-                    ],
-                )
-            ],
+            summary=SummaryContent(
+                paragraphs=[
+                    SummaryParagraph(
+                        text="영업이익 수치가 기사에 포함됐다.",
+                        matched_terms=[
+                            MatchedTerm(
+                                term_id=1,
+                                term="영업이익",
+                                category="재무제표",
+                                definition="",
+                                start=0,
+                                end=4,
+                            )
+                        ],
+                    )
+                ]
+            ),
             articles=[
                 SourceArticle(
                     article_id="001",
@@ -155,7 +151,8 @@ def test_get_issue_docent_includes_articles_and_matched_terms():
     assert response.status_code == 200
     body = response.json()
     assert body["articles"][0]["url"] == "https://example.com/news/1"
-    assert body["explanation"][0]["paragraphs"][0]["matched_terms"][0]["term"] == "영업이익"
+    assert "explanation" not in body
+    assert body["summary"]["paragraphs"][0]["matched_terms"][0]["term"] == "영업이익"
     assert body["quizzes"][0]["quiz_id"] == "quiz-1"
     assert len(body["quizzes"]) == 2
 

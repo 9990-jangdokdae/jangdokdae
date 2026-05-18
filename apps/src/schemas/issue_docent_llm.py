@@ -8,60 +8,21 @@ class ArticleBriefOutput(BaseModel):
     article_id: str
     article_order: int = Field(ge=0)
     brief: str = Field(min_length=1)
-    key_facts: list[str] = Field(default_factory=list)
-    source_views: list[str] = Field(default_factory=list)
 
 
-class SummaryPoints(BaseModel):
-    core_event: list[str] = Field(default_factory=list)
-    market_reaction: list[str] = Field(default_factory=list)
-    source_views: list[str] = Field(default_factory=list)
-    not_clear_points: list[str] = Field(default_factory=list)
-    preserved_evidence: list[str] = Field(default_factory=list)
-
-
-class ClusterSummaryOutput(BaseModel):
-    title: str = Field(min_length=1)
-    teaser: str = Field(min_length=1)
-    summary_points: SummaryPoints
-    summary: str = Field(min_length=1)
-
-
-SectionType = Literal[
-    "what_happened",
-    "why_it_matters",
-    "expert_view",
-    "what_is_not_clear",
-    "wrap_up",
-]
-
-REQUIRED_SECTION_TYPES = {"what_happened", "why_it_matters", "wrap_up"}
-
-
-class IssueDocentSection(BaseModel):
-    section_type: SectionType
-    title: str = Field(min_length=1)
-    paragraphs: list[str] = Field(min_length=1, max_length=2)
-
-    @model_validator(mode="after")
-    def reject_empty_paragraphs(self) -> "IssueDocentSection":
-        if any(not paragraph.strip() for paragraph in self.paragraphs):
-            raise ValueError("paragraphs must not contain empty strings")
-        return self
-
-
-class IssueDocentOutput(BaseModel):
-    explanation: list[IssueDocentSection] = Field(min_length=3, max_length=5)
-
-    @model_validator(mode="after")
-    def validate_required_sections(self) -> "IssueDocentOutput":
-        section_types = [section.section_type for section in self.explanation]
-        missing = REQUIRED_SECTION_TYPES - set(section_types)
-        if missing:
-            raise ValueError(f"missing required sections: {sorted(missing)}")
-        if len(section_types) != len(set(section_types)):
-            raise ValueError("section_type values must be unique")
-        return self
+class IssueDocentContentOutput(BaseModel):
+    title: str = Field(
+        min_length=1,
+        description="확인된 중심 사실을 중립적으로 압축한 제목",
+    )
+    teaser: str = Field(
+        min_length=1,
+        description="목록 카드용 짧은 소개",
+    )
+    summary: str = Field(
+        min_length=1,
+        description="상세 본문",
+    )
 
 
 class IssueDocentQuiz(BaseModel):
