@@ -19,9 +19,9 @@ def test_load_prompt_reads_quiz_prompt_file():
 def test_cluster_summary_prompt_generates_summary_content_only():
     prompt = load_prompt("cluster_summary.md")
 
-    assert "`title`: 확인된 중심 사실을 중립적으로 압축한 제목" in prompt
+    assert "`title`: 중심 기사에서 다루는 회사나 상품과 핵심 변화를 바탕으로" in prompt
     assert "`teaser`: 목록 카드용 짧은 소개" in prompt
     assert "`summary`: 상세 본문" in prompt
-    assert "원인 분석, 시장 해석, 전망, 파급 효과, 학습 포인트, 투자 판단을 새로 쓰지 않는다" in prompt
+    assert "새 원인 분석, 시장 해석, 전망, 파급 효과, 학습 포인트, 투자 판단은 쓰지 않는다" in prompt
     assert "summary_points" not in prompt
     assert "explanation" not in prompt

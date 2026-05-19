@@ -27,8 +27,18 @@ def create_main_llm(settings: Settings | None = None) -> ChatGoogleGenerativeAI:
 
 
 class IssueDocentLLMClient:
-    def __init__(self, llm: Any | None = None) -> None:
-        self.llm = llm or create_main_llm()
+    def __init__(
+        self,
+        llm: Any | None = None,
+        *,
+        structured_output_max_attempts: int | None = None,
+    ) -> None:
+        settings = get_settings()
+        self.llm = llm or create_main_llm(settings)
+        self.structured_output_max_attempts = max(
+            1,
+            structured_output_max_attempts or settings.llm_transport_max_retries + 1,
+        )
 
     async def generate_article_brief(self, article: ArticleForGeneration) -> ArticleBriefOutput:
         return await self._structured_invoke(
@@ -98,15 +108,20 @@ class IssueDocentLLMClient:
         validation_context: dict[str, Any] | None = None,
     ) -> Any:
         runnable = self.llm.with_structured_output(schema)
-        result = await runnable.ainvoke(
-            [
-                SystemMessage(content=load_prompt(prompt_name)),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=False, default=str)),
-            ]
-        )
-        if isinstance(result, schema):
-            result = result.model_dump()
-        return schema.model_validate(result, context=validation_context)
+        messages = [
+            SystemMessage(content=load_prompt(prompt_name)),
+            HumanMessage(content=json.dumps(payload, ensure_ascii=False, default=str)),
+        ]
+        last_error: Exception | None = None
+        for _ in range(self.structured_output_max_attempts):
+            try:
+                result = await runnable.ainvoke(messages)
+                if isinstance(result, schema):
+                    result = result.model_dump()
+                return schema.model_validate(result, context=validation_context)
+            except Exception as exc:
+                last_error = exc
+        raise last_error
 
 
 def _jsonable(value: Any) -> Any:

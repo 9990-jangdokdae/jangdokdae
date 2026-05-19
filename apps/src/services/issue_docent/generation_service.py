@@ -39,6 +39,8 @@ class IssueDocentGenerationService:
             raise ValueError(f"cluster {cluster_id} was not found")
 
         stock_terms = await self.repository.get_stock_terms()
+        await self.repository.session.rollback()
+
         result = await self.graph.ainvoke({"cluster": context, "stock_terms": stock_terms})
         payload: IssueDocentPersistPayload = result["persist_payload"]
         if dry_run:

@@ -13,7 +13,7 @@ class ArticleBriefOutput(BaseModel):
 class IssueDocentContentOutput(BaseModel):
     title: str = Field(
         min_length=1,
-        description="확인된 중심 사실을 중립적으로 압축한 제목",
+        description="중심 기사에서 다루는 회사나 상품과 핵심 변화를 바탕으로 한 쉬운 제목",
     )
     teaser: str = Field(
         min_length=1,
