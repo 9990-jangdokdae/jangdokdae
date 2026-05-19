@@ -40,6 +40,33 @@ class FlakyStructuredLLM:
         }
 
 
+class RetryFeedbackStructuredLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.message_history = []
+
+    def with_structured_output(self, schema):
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        self.message_history.append(messages)
+        if self.calls == 1:
+            raise ValueError("paragraph source_article_orders must be selected articles")
+        return {
+            "article_pk": 1,
+            "article_id": "article-1",
+            "article_order": 0,
+            "brief": "기사 핵심 내용",
+            "core_event": "기사 중심 사건",
+            "key_numbers": [],
+            "stated_background": [],
+            "stated_market_reactions": [],
+            "stated_interpretations": [],
+            "low_priority_details": [],
+        }
+
+
 class CapturingStructuredLLM:
     def __init__(self, response: dict | None = None) -> None:
         self.schema = None
@@ -91,6 +118,30 @@ async def test_structured_invoke_retries_empty_output_failure():
     assert llm.calls == 2
     assert result.brief == "기사 핵심 내용"
     assert result.core_event == "기사 중심 사건"
+
+
+@pytest.mark.asyncio
+async def test_structured_invoke_sends_validation_feedback_on_retry():
+    llm = RetryFeedbackStructuredLLM()
+    client = IssueDocentLLMClient(llm=llm, structured_output_max_attempts=2)
+
+    await client.generate_article_brief(
+        ArticleForGeneration(
+            article_pk=1,
+            article_id="article-1",
+            article_order=0,
+            title="테스트 기사",
+            url="https://example.com",
+            press="신문",
+            published_date=datetime(2026, 5, 19),
+            content="본문",
+            similarity_to_centroid=1.0,
+        )
+    )
+
+    assert llm.calls == 2
+    assert "이전 출력은 구조 검증에 실패했습니다" in llm.message_history[1][-1].content
+    assert "paragraph source_article_orders must be selected articles" in llm.message_history[1][-1].content
 
 
 @pytest.mark.asyncio

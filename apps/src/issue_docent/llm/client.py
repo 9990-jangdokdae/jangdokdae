@@ -66,6 +66,9 @@ class IssueDocentLLMClient:
             schema=IssueDocentContentOutput,
             prompt_name="cluster_summary.md",
             payload=payload,
+            validation_context={
+                "min_summary_paragraphs": min(2, len(content_plan.paragraphs)),
+            },
         )
 
     async def generate_content_plan(
@@ -78,6 +81,15 @@ class IssueDocentLLMClient:
             schema=IssueDocentContentPlanOutput,
             prompt_name="content_plan.md",
             payload=_build_content_payload(cluster=cluster, article_briefs=article_briefs),
+            validation_context={
+                "available_article_orders": [brief.article_order for brief in article_briefs],
+                "allowed_plan_sections": [
+                    "fact",
+                    "background",
+                    "performance_detail",
+                    "policy_detail",
+                ],
+            },
         )
 
     async def generate_quizzes(
@@ -118,6 +130,16 @@ class IssueDocentLLMClient:
                 return schema.model_validate(result, context=validation_context)
             except Exception as exc:
                 last_error = exc
+                messages = [
+                    *messages[:2],
+                    HumanMessage(
+                        content=(
+                            "이전 출력은 구조 검증에 실패했습니다. "
+                            "입력 사실은 그대로 유지하되, 아래 오류를 고쳐 같은 JSON schema로 다시 출력하세요.\n"
+                            f"{exc}"
+                        )
+                    ),
+                ]
         raise last_error
 
 

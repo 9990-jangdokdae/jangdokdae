@@ -133,12 +133,12 @@ class FakeLLMClient:
 
 
 @pytest.mark.asyncio
-async def test_issue_docent_graph_fans_out_article_briefs_and_builds_payload():
+async def test_issue_docent_graph_uses_representative_article_brief_and_builds_payload():
     fake_llm = FakeLLMClient()
     graph = build_issue_docent_graph(fake_llm)
     result = await graph.ainvoke({"cluster": _cluster_context()})
 
-    assert fake_llm.content_input_orders == [0, 1]
+    assert fake_llm.content_input_orders == [0]
     assert fake_llm.max_article_brief_concurrency == 1
     assert fake_llm.content_plan_issue == "첫 기사 중심 이슈"
     assert fake_llm.quiz_summary == "핵심 사건이 있었다."
@@ -184,13 +184,13 @@ async def test_issue_docent_graph_uses_summary_terms_as_quiz_candidates():
 
 
 @pytest.mark.asyncio
-async def test_issue_docent_graph_limits_article_briefs_to_representative_candidates():
+async def test_issue_docent_graph_limits_article_briefs_to_representative_article():
     fake_llm = FakeLLMClient()
     graph = build_issue_docent_graph(fake_llm)
 
     await graph.ainvoke({"cluster": _cluster_context(article_count=6)})
 
-    assert fake_llm.content_input_orders == [0, 1, 2, 3, 4]
+    assert fake_llm.content_input_orders == [0]
 
 
 def _cluster_context(article_count: int = 2) -> ClusterGenerationContext:

@@ -17,7 +17,13 @@ class ArticleBriefOutput(BaseModel):
 
 
 class IssueDocentPlanParagraph(BaseModel):
-    section: Literal["fact", "background", "market_reaction"]
+    section: Literal[
+        "fact",
+        "background",
+        "performance_detail",
+        "policy_detail",
+        "market_reaction",
+    ]
     source_article_orders: list[int] = Field(min_length=1)
     facts: list[str] = Field(min_length=1, max_length=3)
 
@@ -27,7 +33,33 @@ class IssueDocentContentPlanOutput(BaseModel):
     central_issue: str = Field(min_length=1)
     selected_article_orders: list[int] = Field(min_length=1, max_length=3)
     omitted_article_orders: list[int] = Field(default_factory=list)
-    paragraphs: list[IssueDocentPlanParagraph] = Field(min_length=1, max_length=3)
+    paragraphs: list[IssueDocentPlanParagraph] = Field(min_length=1, max_length=2)
+
+    @model_validator(mode="after")
+    def validate_article_order_consistency(
+        self,
+        info: ValidationInfo,
+    ) -> "IssueDocentContentPlanOutput":
+        selected = set(self.selected_article_orders)
+        omitted = set(self.omitted_article_orders)
+        if info.context and "available_article_orders" in info.context:
+            available = set(info.context["available_article_orders"])
+            if not selected <= available:
+                raise ValueError("selected_article_orders must have available article briefs")
+        if info.context and "allowed_plan_sections" in info.context:
+            allowed_sections = set(info.context["allowed_plan_sections"])
+            for paragraph in self.paragraphs:
+                if paragraph.section not in allowed_sections:
+                    raise ValueError("paragraph section must be allowed in this generation context")
+        if self.central_article_order not in selected:
+            raise ValueError("central_article_order must be included in selected_article_orders")
+        if selected & omitted:
+            raise ValueError("selected_article_orders and omitted_article_orders must not overlap")
+        for paragraph in self.paragraphs:
+            sources = set(paragraph.source_article_orders)
+            if not sources <= selected:
+                raise ValueError("paragraph source_article_orders must be selected articles")
+        return self
 
 
 class IssueDocentContentOutput(BaseModel):
@@ -43,6 +75,33 @@ class IssueDocentContentOutput(BaseModel):
         min_length=1,
         description="상세 본문",
     )
+
+    @field_validator("title")
+    @classmethod
+    def reject_numeric_title(cls, title: str) -> str:
+        if any(char.isdigit() for char in title):
+            raise ValueError("title must not include numbers")
+        return title
+
+    @field_validator("title", "teaser", "summary")
+    @classmethod
+    def reject_model_judgment_phrasing(cls, value: str) -> str:
+        blocked_phrases = ("보입니다", "보이며", "풀이됩니다", "분석됩니다")
+        if any(phrase in value for phrase in blocked_phrases):
+            raise ValueError("content must not use model judgment phrasing")
+        return value
+
+    @model_validator(mode="after")
+    def validate_summary_paragraph_count(self, info: ValidationInfo) -> "IssueDocentContentOutput":
+        if not info.context or "min_summary_paragraphs" not in info.context:
+            return self
+        min_summary_paragraphs = int(info.context["min_summary_paragraphs"])
+        paragraph_count = len(
+            [paragraph for paragraph in self.summary.split("\n\n") if paragraph.strip()]
+        )
+        if paragraph_count < min_summary_paragraphs:
+            raise ValueError("summary must keep the requested paragraph separation")
+        return self
 
 
 class IssueDocentQuiz(BaseModel):

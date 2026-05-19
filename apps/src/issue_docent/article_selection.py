@@ -1,7 +1,7 @@
 from apps.src.repositories.issue_docent import ArticleForGeneration
 
 
-MAX_ARTICLES_FOR_DEEP_BRIEF = 5
+MAX_ARTICLES_FOR_DEEP_BRIEF = 1
 
 
 def select_articles_for_deep_brief(
