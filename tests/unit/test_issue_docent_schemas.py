@@ -31,6 +31,24 @@ def test_article_brief_output_keeps_structured_source_facts():
     assert output.stated_interpretations == []
 
 
+def test_article_brief_output_rejects_schema_field_name_artifacts():
+    with pytest.raises(ValidationError):
+        ArticleBriefOutput.model_validate(
+            {
+                "article_pk": 1,
+                "article_id": "a1",
+                "article_order": 0,
+                "brief": "기사 요약",
+                "core_event": "중심 사건",
+                "key_numbers": [],
+                "stated_background": [],
+                "stated_market_reactions": ["stated_interpretations"],
+                "stated_interpretations": [],
+                "low_priority_details": [],
+            }
+        )
+
+
 def test_issue_docent_content_plan_output_accepts_paragraph_plan():
     output = IssueDocentContentPlanOutput.model_validate(
         {
@@ -285,6 +303,17 @@ def test_issue_docent_content_output_rejects_numeric_title():
                 "title": "KB자산운용 ETF 순자산이 33조 원을 넘어섰습니다",
                 "teaser": "KB자산운용의 ETF 순자산이 늘었습니다.",
                 "summary": "KB자산운용의 ETF 순자산이 늘었습니다.",
+            }
+        )
+
+
+def test_issue_docent_content_output_rejects_teaser_with_multiple_numbers():
+    with pytest.raises(ValidationError):
+        IssueDocentContentOutput.model_validate(
+            {
+                "title": "코스피가 하락했습니다",
+                "teaser": "코스피가 7999.67을 기록한 뒤 외국인의 5.6조 원 매도로 하락했습니다.",
+                "summary": "코스피가 하락했습니다.",
             }
         )
 

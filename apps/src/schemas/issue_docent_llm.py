@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
@@ -14,6 +15,26 @@ class ArticleBriefOutput(BaseModel):
     stated_market_reactions: list[str] = Field(default_factory=list)
     stated_interpretations: list[str] = Field(default_factory=list)
     low_priority_details: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "key_numbers",
+        "stated_background",
+        "stated_market_reactions",
+        "stated_interpretations",
+        "low_priority_details",
+    )
+    @classmethod
+    def reject_schema_field_name_artifacts(cls, items: list[str]) -> list[str]:
+        field_names = {
+            "key_numbers",
+            "stated_background",
+            "stated_market_reactions",
+            "stated_interpretations",
+            "low_priority_details",
+        }
+        if any(item.strip() in field_names for item in items):
+            raise ValueError("article brief list items must not contain schema field names")
+        return items
 
 
 class IssueDocentPlanParagraph(BaseModel):
@@ -82,6 +103,14 @@ class IssueDocentContentOutput(BaseModel):
         if any(char.isdigit() for char in title):
             raise ValueError("title must not include numbers")
         return title
+
+    @field_validator("teaser")
+    @classmethod
+    def reject_teaser_with_multiple_numbers(cls, teaser: str) -> str:
+        number_like_tokens = re.findall(r"\d+(?:[.,]\d+)?", teaser)
+        if len(number_like_tokens) > 1:
+            raise ValueError("teaser must include at most one number")
+        return teaser
 
     @field_validator("title", "teaser", "summary")
     @classmethod

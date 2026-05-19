@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,43 @@ REQUIRED_MANUAL_GATES = [
     "concision",
 ]
 
+REVIEW_BLOCKED_PHRASES = (
+    "보입니다",
+    "보이며",
+    "풀이됩니다",
+    "분석됩니다",
+)
+
+ARTICLE_HYPE_PHRASES = (
+    "역대급",
+)
+
+CAUSAL_SUPPORT_PHRASES = (
+    "보조했습니다",
+    "보조했다",
+    "반전시켰습니다",
+    "반전시켰다",
+)
+
+INVESTMENT_BENEFIT_PHRASES = (
+    "혜택",
+    "수혜",
+    "가능성",
+)
+
+LOW_PRIORITY_TECHNICAL_CATALYSTS = (
+    "SOCAMM2",
+    "RDIMM",
+    "토큰 제한",
+)
+
+ALLOWED_PLAN_SECTIONS = {
+    "fact",
+    "background",
+    "performance_detail",
+    "policy_detail",
+}
+
 
 def build_quality_review_row(
     *,
@@ -31,7 +69,7 @@ def build_quality_review_row(
     summary: str,
     content_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    row = {
+    row: dict[str, Any] = {
         "cluster_id": cluster_id,
         "title": title,
         "teaser": teaser,
@@ -41,7 +79,76 @@ def build_quality_review_row(
     }
     if content_plan is not None:
         row["content_plan"] = content_plan
+    auto_gates, auto_review_notes = evaluate_quality_gates(row)
+    row["auto_gates"] = auto_gates
+    row["auto_review_notes"] = auto_review_notes
     return row
+
+
+def evaluate_quality_gates(row: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+    notes: list[str] = []
+    content_plan = row.get("content_plan") or {}
+    text = "\n".join([row["title"], row["teaser"], row["summary"]])
+    paragraph_count = int(row["paragraph_count"])
+
+    if any(char.isdigit() for char in row["title"]):
+        notes.append("title must not include numbers")
+    if len(re.findall(r"\d+(?:[.,]\d+)?", row["teaser"])) > 1:
+        notes.append("teaser must include at most one number")
+    if any(phrase in text for phrase in REVIEW_BLOCKED_PHRASES):
+        notes.append("content must not use model judgment phrasing")
+    if any(phrase in text for phrase in ARTICLE_HYPE_PHRASES):
+        notes.append("content must not use article-hype wording")
+    if any(phrase in text for phrase in CAUSAL_SUPPORT_PHRASES):
+        notes.append("content must not use causal-support wording")
+    if any(phrase in row["summary"] for phrase in INVESTMENT_BENEFIT_PHRASES):
+        notes.append("summary must not include investment-benefit wording")
+    if any(phrase in row["summary"] for phrase in LOW_PRIORITY_TECHNICAL_CATALYSTS):
+        notes.append("summary must not include low-priority technical catalysts")
+    if paragraph_count > 2:
+        notes.append("summary must be at most two paragraphs")
+
+    selected_article_orders = content_plan.get("selected_article_orders") or [0]
+    if selected_article_orders != [0]:
+        notes.append("selected_article_orders must stay on representative article only")
+    sections = {
+        paragraph.get("section")
+        for paragraph in content_plan.get("paragraphs", [])
+        if isinstance(paragraph, dict)
+    }
+    if not sections <= ALLOWED_PLAN_SECTIONS:
+        notes.append("content_plan contains a disallowed section")
+
+    gates = {
+        "output_quality": "PASS",
+        "prompt_quality": "PASS",
+        "beginner_difficulty": "PASS",
+        "central_article_reflection": "PASS",
+        "concision": "PASS",
+    }
+    if any(
+        note
+        for note in notes
+        if note.startswith("title")
+        or note.startswith("content")
+        or note.startswith("summary must not")
+    ):
+        gates["output_quality"] = "FAIL"
+    if any(note.startswith("content_plan") for note in notes):
+        gates["prompt_quality"] = "FAIL"
+    if any(
+        note
+        for note in notes
+        if note.startswith("content")
+        or note.startswith("summary must not")
+        or note.startswith("teaser")
+    ):
+        gates["beginner_difficulty"] = "FAIL"
+    if any(note.startswith("selected_article_orders") for note in notes):
+        gates["central_article_reflection"] = "FAIL"
+    if any(note.startswith("summary must be") or note.startswith("teaser") for note in notes):
+        gates["concision"] = "FAIL"
+    return gates, notes
 
 
 def prompt_hash(prompt_name: str) -> str:

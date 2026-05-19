@@ -8,6 +8,10 @@ def test_load_prompt_reads_prompt_file():
     assert "`core_event`" in prompt
     assert "`key_numbers`" in prompt
     assert "`low_priority_details`" in prompt
+    assert "`core_event`에도 기사 제목의 과장 표현을 옮기지 않는다" in prompt
+    assert "schema 필드명 자체를 배열 항목으로 출력하지 않는다" in prompt
+    assert "전망이나 기대는 말한 주체와 함께 `stated_interpretations`에만 둔다" in prompt
+    assert "목표주가 기사에서 세부 기술 촉매는 중심 사건에 꼭 필요하지 않으면 `low_priority_details`에 둔다" in prompt
 
 
 def test_load_prompt_reads_quiz_prompt_file():
@@ -22,12 +26,16 @@ def test_cluster_summary_prompt_generates_summary_content_only():
     assert "content_plan" in prompt
     assert "설계도에 없는 기사" in prompt
     assert "탈환, 흥행, 급증, 눈앞" in prompt
+    assert "역대급 같은 기사식 강조 표현을 쓰지 않는다" in prompt
     assert "title과 teaser에서도 기사식 표현을 되살리지 않는다" in prompt
     assert "힘입어, 덕분에, 견인했다" in prompt
+    assert "보조했다처럼 원인 보조 관계를 새로 단정하지 않는다" in prompt
+    assert "하락으로 반전시켰다처럼 한 주체가 지수 방향을 만들었다고 단정하지 않는다" in prompt
     assert "서로 다른 문단의 facts가 같은 사실을 말하면 한 번만 쓴다" in prompt
     assert "모호한 상품 표현보다 구체 상품명을 우선한다" in prompt
     assert "`title`: 중심 기사에서 다루는 회사나 상품과 핵심 변화를 바탕으로" in prompt
     assert "`teaser`: 목록 카드용 짧은 소개" in prompt
+    assert "`teaser`: 숫자 표현이 둘 이상 필요해 보이면 숫자를 모두 빼고 변화만 쓴다" in prompt
     assert "`summary`: 상세 본문" in prompt
     assert "새 원인 분석, 시장 해석, 전망, 파급 효과, 학습 포인트, 투자 판단은 쓰지 않는다" in prompt
     assert "summary_points" not in prompt
@@ -45,5 +53,9 @@ def test_content_plan_prompt_names_representative_article():
     assert "market_reaction은 외부 투자자, 거래, 자금, 업계 조치처럼 기사에 명시된 외부 반응" in prompt
     assert "외부 반응이 없으면 `market_reaction` 문단을 만들지 않는다" in prompt
     assert "회사 계획이나 상품 구조 평가는 `market_reaction`에 넣지 않는다" in prompt
+    assert "보조했다처럼 원인 보조 관계를 facts에 넣지 않는다" in prompt
+    assert "목표주가 기사에서는 목표주가 변화와 핵심 가격 전망만 우선한다" in prompt
+    assert "SOCAMM2, RDIMM, 토큰 제한 같은 기술 세부 촉매는 제외한다" in prompt
+    assert "수혜, 혜택, 가능성 중심의 투자 해석은 facts에 넣지 않는다" in prompt
     assert "한 자산운용사의 ETF 순자산 이슈를 시장 전체 반도체 ETF 편입 비중으로 넓히지 않는다" in prompt
     assert "대표 기사만으로 중심 이슈가 충분하면 `selected_article_orders`는 대표 기사 하나만 둔다" in prompt
