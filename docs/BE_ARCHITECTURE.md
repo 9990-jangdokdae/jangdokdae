@@ -82,8 +82,6 @@ jangdokdae-server/
         │   ├── paths.py         # 프로젝트 경로 상수 (DATA_DIR 등)
         │   ├── dart_accounts.py # DART 재무제표 계정명 매핑
         │   ├── macro_tickers.py # Yahoo Finance 거시지표 티커 목록
-        │   └── google_vertex_conf.py # Vertex AI / Gemini API 설정
-        │                              GEMINI_USE_VERTEX=true 시 Cloud 크레딧 적용
         │
         ├── dependencies/        # ★ FastAPI 공통 의존성
         │   └── auth.py          # get_current_user()
@@ -226,11 +224,8 @@ cd jangdokdae-server
 cp .env.example .env
 # .env 파일 편집하여 API 키 입력
 
-# 가상환경 활성화
-source .venv/bin/activate
-
 # 서버 실행
-uvicorn apps.main:app --reload --port 8000
+uv run uvicorn apps.main:app --reload --port 8000
 ```
 
 Swagger UI: http://localhost:8000/docs
