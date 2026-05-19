@@ -1,6 +1,7 @@
 """기업 데이터 수집 오케스트레이터."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import OpenDartReader as ODR
@@ -17,6 +18,9 @@ from apps.src.services.collector.dart_collector import (
 from apps.src.services.collector.krx_collector import fetch_ohlcv
 
 logger = logging.getLogger(__name__)
+
+_COMPANY_WORKERS = 3  # 기업 단위 동시 수집 수 (DART rate limit 고려)
+_IO_WORKERS = 4       # 단일 기업 내 KRX·DART 병렬 I/O 수
 
 
 def _pd_str(row: pd.Series, col: str) -> str | None:
@@ -44,25 +48,33 @@ class CompanyCollector:
     """
 
     def __init__(self, market_days: int = 60, disclosure_months: int = 3) -> None:
-        """수집 범위(거래일 수, 공시 기간)와 기준 날짜를 초기화합니다."""
         self.market_days = market_days
         self.disclosure_months = disclosure_months
         self._end_date = datetime.now().strftime("%Y%m%d")
         self._fs_year = datetime.now().year - 1
+        self._master = CompanyMasterCollector().load()
 
     def collect(self, clusters: list[dict]) -> list[dict]:
         """각 클러스터의 기업 데이터를 수집해 company_data 필드를 추가합니다."""
-        master = CompanyMasterCollector().load()
         dart = ODR(getenv.OPENDART_API_KEY)
 
-        # 전체 파이프라인에서 언급된 고유 기업명 수집 (중복 API 호출 방지)
         all_companies: set[str] = set()
         for cluster in clusters:
             all_companies.update(cluster.get("extraction", {}).get("companies", []))
 
         company_cache: dict[str, dict] = {}
-        for name in all_companies:
-            company_cache[name] = self._collect_one(name, master, dart)
+        with ThreadPoolExecutor(max_workers=_COMPANY_WORKERS) as executor:
+            futures = {
+                executor.submit(self._collect_one, name, dart): name
+                for name in all_companies
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    company_cache[name] = future.result()
+                except Exception as exc:
+                    logger.warning("[company] collect failed company=%s error=%s", name, exc)
+                    company_cache[name] = {"company_name": name, "matched": False}
 
         for cluster in clusters:
             names = cluster.get("extraction", {}).get("companies", [])
@@ -70,15 +82,10 @@ class CompanyCollector:
 
         return clusters
 
-    def _collect_one(
-        self,
-        company_name: str,
-        master: pd.DataFrame,
-        dart: ODR,
-    ) -> dict:
-        """단일 기업명에 대해 KRX·DART 전 데이터를 수집하고 결과 dict를 반환합니다."""
+    def _collect_one(self, company_name: str, dart: ODR) -> dict:
+        """단일 기업에 대해 KRX·DART 4개 I/O를 병렬 수집합니다."""
         try:
-            krx_code, dart_code, dart_name, sector, market = self._match(company_name, master)
+            krx_code, dart_code, dart_name, sector, market = self._match(company_name)
         except CompanyMatchError as exc:
             logger.warning("[company] match failed company=%s reason=%s", company_name, exc)
             return {"company_name": company_name, "matched": False}
@@ -90,32 +97,46 @@ class CompanyCollector:
             "dart_code": dart_code,
             "dart_name": dart_name,
             "sector": sector,
-            "market": market,       # "KOSPI" | "KOSDAQ" | None
-            "market_data": {},      # {"ohlcv": [...]}
+            "market": market,
+            "market_data": {},
             "dart": {},
         }
 
-        try:
-            result["market_data"]["ohlcv"] = fetch_ohlcv(krx_code, self.market_days, self._end_date)
-        except KRXDataError as exc:
-            logger.warning("[company] ohlcv failed company=%s reason=%s", company_name, exc)
+        tasks: list[tuple[str, str, callable]] = [
+            ("market_data", "ohlcv",                lambda: fetch_ohlcv(krx_code, self.market_days, self._end_date)),
+            ("dart",        "disclosures",           lambda: fetch_disclosure_list(dart, dart_code, self.disclosure_months)),
+            ("dart",        "business_report",       lambda: fetch_latest_business_report(dart, dart_code)),
+            ("dart",        "financial_statements",  lambda: fetch_financial_statements(dart, dart_code, self._fs_year)),
+        ]
 
-        try:
-            result["dart"]["disclosures"] = fetch_disclosure_list(dart, dart_code, self.disclosure_months)
-        except DARTDataError as exc:
-            logger.warning("[company] disclosures failed company=%s reason=%s", company_name, exc)
-
-        try:
-            result["dart"]["business_report"] = fetch_latest_business_report(dart, dart_code)
-        except DARTDataError as exc:
-            logger.warning("[company] business_report failed company=%s reason=%s", company_name, exc)
-
-        try:
-            result["dart"]["financial_statements"] = fetch_financial_statements(dart, dart_code, self._fs_year)
-        except DARTDataError as exc:
-            logger.warning("[company] financial_statements failed company=%s reason=%s", company_name, exc)
+        with ThreadPoolExecutor(max_workers=_IO_WORKERS) as executor:
+            futures = {
+                executor.submit(fn): (top, sub)
+                for top, sub, fn in tasks
+            }
+            for future in as_completed(futures):
+                top, sub = futures[future]
+                try:
+                    result[top][sub] = future.result()
+                except (KRXDataError, DARTDataError) as exc:
+                    logger.warning("[company] %s failed company=%s reason=%s", sub, company_name, exc)
 
         return result
+
+    def _match(self, company_name: str) -> tuple[str, str, str, str | None, str | None]:
+        """기업명으로 (krx_code, dart_code, dart_name, sector, market)을 반환합니다."""
+        master = self._master
+        exact = master[master["dart_name"] == company_name]
+        if not exact.empty:
+            row = exact.iloc[0]
+            return row["krx_code"], row["dart_code"], row["dart_name"], _pd_str(row, "sector"), _pd_str(row, "market")
+
+        partial = master[master["dart_name"].str.contains(company_name, na=False, regex=False)]
+        if not partial.empty:
+            row = partial.loc[partial["dart_name"].str.len().sub(len(company_name)).abs().idxmin()]
+            return row["krx_code"], row["dart_code"], row["dart_name"], _pd_str(row, "sector"), _pd_str(row, "market")
+
+        raise CompanyMatchError(f"no match for '{company_name}'")
 
     def _match(self, company_name: str, master: pd.DataFrame) -> tuple[str, str, str, str | None, str | None]:
         """기업명으로 (krx_code, dart_code, dart_name, sector, market)을 반환합니다."""

@@ -108,8 +108,14 @@ def step_preprocess(_run_dir: Path, articles: list[dict], _args: argparse.Namesp
 
 def step_embed(_run_dir: Path, articles: list[dict], _args: argparse.Namespace) -> list[dict]:
     """각 기사에 sentence-transformer 임베딩 벡터를 생성합니다."""
-    result = NewsEmbedder().embed(articles)
-    return result
+    return NewsEmbedder().embed(articles)
+
+
+def _make_step_embed(embedder: NewsEmbedder):
+    """main()에서 생성된 embedder 인스턴스를 재사용하는 step 함수를 반환합니다."""
+    def _step(_run_dir: Path, articles: list[dict], _args: argparse.Namespace) -> list[dict]:
+        return embedder.embed(articles)
+    return _step
 
 
 def step_cluster(run_dir: Path, articles: list[dict], _args: argparse.Namespace) -> list[dict]:
@@ -182,11 +188,16 @@ def main() -> None:
     repo = PipelineStore(embedder=embedder)
     run_date = datetime.now().date()
 
+    pipeline = [
+        (name, _make_step_embed(embedder) if name == "embed" else fn, fatal)
+        for name, fn, fatal in _PIPELINE
+    ]
+
     data: Any = None
     step_data: dict[str, Any] = {}
 
     try:
-        for name, step_fn, fatal in _PIPELINE:
+        for name, step_fn, fatal in pipeline:
             result = _run_step(name, step_fn, run_dir, data, args, fatal=fatal)
             if not result.success:
                 logger.error("[pipeline] step=%s failed, rolling back run_dir=%s", name, run_dir)

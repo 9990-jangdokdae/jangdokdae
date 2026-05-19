@@ -1,7 +1,6 @@
 """뉴스 클러스터 엔티티 추출 모듈."""
 
 import logging
-import time
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, field_validator
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 _PROMPT_TEMPLATE = (PROMPTS_DIR / "entity_extraction.txt").read_text(encoding="utf-8")
 
 _SECTORS_SET = set(SECTORS)
+_CONTENT_LIMIT = 1500  # chars — 이후 내용은 엔티티 추출에 불필요
 
 
 class Extraction(BaseModel):
@@ -34,13 +34,11 @@ class Extraction(BaseModel):
 
 
 class EntityExtractor:
-    """LangChain + Gemini를 사용해 클러스터별 기업·섹터·키워드를 추출합니다.
+    """LangChain + Gemini를 사용해 클러스터별 기업·섹터·키워드를 추출합니다."""
 
-    Args:
-        delay_sec: 클러스터 간 API 호출 딜레이(초). Rate limit 방지.
-    """
+    _MAX_CONCURRENCY = 3
 
-    def __init__(self, delay_sec: float = 1.0) -> None:
+    def __init__(self) -> None:
         if not getenv.GOOGLE_CLOUD_PROJECT:
             raise LLMEnvError(
                 "GOOGLE_CLOUD_PROJECT environment variable is not set",
@@ -56,31 +54,34 @@ class EntityExtractor:
         prompt = ChatPromptTemplate.from_template(_PROMPT_TEMPLATE)
         self._chain = prompt | llm.with_structured_output(Extraction)
         self._sectors_text = "\n".join(f"   - {s}" for s in SECTORS)
-        self.delay_sec = delay_sec
 
     def extract(self, clusters: list[dict]) -> list[dict]:
         """각 클러스터에 extraction 필드를 추가합니다."""
-        for i, cluster in enumerate(clusters):
-            if i > 0:
-                time.sleep(self.delay_sec)
+        inputs = [
+            {
+                "titles": "\n".join(f"- {a['title']}" for a in cluster["articles"]),
+                "content": (cluster["articles"][0].get("content") or "")[:_CONTENT_LIMIT],
+                "sectors": self._sectors_text,
+            }
+            for cluster in clusters
+        ]
 
-            representative = cluster["articles"][0]
-            titles = "\n".join(f"- {a['title']}" for a in cluster["articles"])
+        results = self._chain.batch(
+            inputs,
+            config={"max_concurrency": self._MAX_CONCURRENCY},
+            return_exceptions=True,
+        )
 
-            try:
-                result: Extraction = self._chain.invoke({
-                    "titles": titles,
-                    "content": representative.get("content") or "",
-                    "sectors": self._sectors_text,
-                })
-                cluster["extraction"] = result.model_dump()
-            except Exception as exc:
-                exc_str = str(exc).lower()
+        for cluster, result in zip(clusters, results):
+            if isinstance(result, Exception):
+                exc_str = str(result).lower()
                 if "rate" in exc_str or "quota" in exc_str or "429" in exc_str or "exhausted" in exc_str:
-                    err: LLMExtractionError = LLMRateLimitError(str(exc), cluster_id=cluster["cluster_id"])
+                    err: LLMExtractionError = LLMRateLimitError(str(result), cluster_id=cluster["cluster_id"])
                 else:
-                    err = LLMExtractionError(str(exc), cluster_id=cluster["cluster_id"])
+                    err = LLMExtractionError(str(result), cluster_id=cluster["cluster_id"])
                 logger.warning("[extract] %s", err)
                 cluster["extraction"] = {"companies": [], "sectors": [], "keywords": []}
+            else:
+                cluster["extraction"] = result.model_dump()
 
         return clusters

@@ -40,7 +40,7 @@ class NewsCollector:
     def __init__(
         self,
         max_pages: int = 200,
-        concurrency: int = 5,
+        concurrency: int = 10,
         delay_ms: int = 200,
     ) -> None:
         """최대 페이지 수, 동시 크롤링 수, 요청 딜레이를 설정하고 세션을 초기화합니다."""
