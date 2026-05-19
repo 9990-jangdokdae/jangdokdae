@@ -5,7 +5,7 @@ import re
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from apps.src.config import cofig
+from apps.src.config import getenv
 from apps.src.models.analyzer_dto import (
     AnalysisSection,
     AnalysisRequest,
@@ -59,12 +59,12 @@ class IssueBasedAnalyzerService:
 
     def _build_langchain_model(self) -> object:
         """standalone이 아니라 서버 실행 환경의 Gemini 설정을 그대로 사용한다."""
-        if not cofig.GEMINI_API_KEY:
+        if not getenv.GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY 환경변수가 필요합니다.")
 
         return ChatGoogleGenerativeAI(
-            model=cofig.GEMINI_MODEL,
-            google_api_key=cofig.GEMINI_API_KEY,
+            model=getenv.GEMINI_MODEL,
+            google_api_key=getenv.GEMINI_API_KEY,
             temperature=0,
         )
 

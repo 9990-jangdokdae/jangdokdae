@@ -7,15 +7,15 @@ from typing import Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from apps.src.config import cofig
+from apps.src.config import getenv
 
 
 def _get_engine():
     """analyzer가 직접 DB를 읽을 때 쓰는 최소 SQLAlchemy engine을 만든다."""
-    if not cofig.DATABASE_URL:
+    if not getenv.DATABASE_URL:
         raise RuntimeError("DATABASE_URL 환경변수가 필요합니다.")
 
-    url = cofig.DATABASE_URL
+    url = getenv.DATABASE_URL
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 

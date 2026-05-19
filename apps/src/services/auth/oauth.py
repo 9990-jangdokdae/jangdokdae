@@ -1,9 +1,10 @@
 """카카오 / 구글 OAuth API 호출 로직."""
 
-import os
 import urllib.parse
 
 import httpx
+
+from apps.src.config import getenv
 
 KAKAO_AUTH_URL = "https://kauth.kakao.com/oauth/authorize"
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
@@ -20,7 +21,7 @@ GOOGLE_USER_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 def kakao_login_url(redirect_uri: str, state: str) -> str:
     """state 포함 카카오 OAuth 인가 URL을 반환한다. (RFC 6749 §10.12 CSRF 방지)"""
     params = {
-        "client_id": os.environ["KAKAO_CLIENT_ID"],
+        "client_id": getenv.KAKAO_CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "state": state,
@@ -36,8 +37,8 @@ async def kakao_fetch_user(code: str, redirect_uri: str) -> dict:
             KAKAO_TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
-                "client_id": os.environ["KAKAO_CLIENT_ID"],
-                "client_secret": os.environ.get("KAKAO_CLIENT_SECRET", ""),
+                "client_id": getenv.KAKAO_CLIENT_ID,
+                "client_secret": getenv.KAKAO_CLIENT_SECRET,
                 "redirect_uri": redirect_uri,
                 "code": code,
             },
@@ -69,7 +70,7 @@ async def kakao_fetch_user(code: str, redirect_uri: str) -> dict:
 def google_login_url(redirect_uri: str, state: str) -> str:
     """state 포함 구글 OAuth 인가 URL을 반환한다. (RFC 6749 §10.12 CSRF 방지)"""
     params = {
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
+        "client_id": getenv.GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid email profile",
@@ -87,8 +88,8 @@ async def google_fetch_user(code: str, redirect_uri: str) -> dict:
             GOOGLE_TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
-                "client_id": os.environ["GOOGLE_CLIENT_ID"],
-                "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+                "client_id": getenv.GOOGLE_CLIENT_ID,
+                "client_secret": getenv.GOOGLE_CLIENT_SECRET,
                 "redirect_uri": redirect_uri,
                 "code": code,
             },

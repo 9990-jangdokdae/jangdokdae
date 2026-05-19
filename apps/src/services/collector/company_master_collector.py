@@ -6,9 +6,10 @@ dart_code / dart_name / krx_code 매핑 테이블을 만든다.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta
 import OpenDartReader as ODR
+
+from apps.src.config import getenv
 import pandas as pd
 
 from apps.src.utils.json_utils import dataframe_to_records, save_json
@@ -44,7 +45,7 @@ class CompanyMasterCollector:
 
     def _build(self) -> pd.DataFrame:
         """DART corp_code.xml에서 상장 기업만 추출하고 PyKRX sector/market을 병합합니다."""
-        dart = ODR(os.environ["OPENDART_API_KEY"])
+        dart = ODR(getenv.OPENDART_API_KEY)
 
         df = dart.corp_codes
         master = (

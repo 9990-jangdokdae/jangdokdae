@@ -1,6 +1,5 @@
 """OAuth 로그인 및 JWT 인증 라우터."""
 
-import os
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -9,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.src.config import getenv
 from apps.src.config.database import get_db
 from apps.src.dependencies.auth import COOKIE_NAME, get_current_user
 from apps.src.models.user import User
@@ -24,7 +24,7 @@ STATE_MAX_AGE = 60 * 10  # 10분
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "development") == "production"
+    return getenv.APP_ENV == "production"
 
 
 def _callback_url(request: Request, provider: str) -> str:
@@ -123,7 +123,7 @@ async def kakao_callback(
         user = await _upsert_user(session, user_info)
         token = jwt.create_access_token(user.id)
 
-        frontend_url = os.environ.get("CLIENT_URL", "http://localhost:3000")
+        frontend_url = getenv.CLIENT_URL
         response = RedirectResponse(url=frontend_url)
         _set_auth_cookie(response, token)
         return response
@@ -165,7 +165,7 @@ async def google_callback(
         user = await _upsert_user(session, user_info)
         token = jwt.create_access_token(user.id)
 
-        frontend_url = os.environ.get("CLIENT_URL", "http://localhost:3000")
+        frontend_url = getenv.CLIENT_URL
         response = RedirectResponse(url=frontend_url)
         _set_auth_cookie(response, token)
         return response

@@ -1,12 +1,12 @@
 """기업 데이터 수집 오케스트레이터."""
 
 import logging
-import os
 from datetime import datetime
 
 import OpenDartReader as ODR
 import pandas as pd
 
+from apps.src.config import getenv
 from apps.src.exceptions.company_exceptions import CompanyMatchError, DARTDataError, KRXDataError
 from apps.src.services.collector.company_master_collector import CompanyMasterCollector
 from apps.src.services.collector.dart_collector import (
@@ -53,7 +53,7 @@ class CompanyCollector:
     def collect(self, clusters: list[dict]) -> list[dict]:
         """각 클러스터의 기업 데이터를 수집해 company_data 필드를 추가합니다."""
         master = CompanyMasterCollector().load()
-        dart = ODR(os.environ["OPENDART_API_KEY"])
+        dart = ODR(getenv.OPENDART_API_KEY)
 
         # 전체 파이프라인에서 언급된 고유 기업명 수집 (중복 API 호출 방지)
         all_companies: set[str] = set()

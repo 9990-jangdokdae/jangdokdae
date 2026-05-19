@@ -1,12 +1,12 @@
 """뉴스 기사 임베딩 모듈."""
 
 import logging
-import os
 
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
+from apps.src.config import getenv
 from apps.src.exceptions.processing_exceptions import EmbedEncodeError, EmbedModelError
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class NewsEmbedder:
 
     def __init__(self, batch_size: int = 32, overlap: int = 20) -> None:
         """EMBED_MODEL 환경변수의 모델을 로드하고 MPS/CPU 디바이스를 선택합니다."""
-        model_name = os.environ.get("EMBED_MODEL")
+        model_name = getenv.EMBED_MODEL
         if not model_name:
             raise EmbedModelError("EMBED_MODEL environment variable is not set")
         device = "mps" if torch.backends.mps.is_available() else "cpu"
