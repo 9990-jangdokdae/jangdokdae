@@ -22,6 +22,9 @@ dependencies = [
   "langsmith",
   "langchain-google-genai",
   "pykrx",
+  "opendartreader",
+  "torch",
+  "sentence-transformers",
 ]
 
 [dependency-groups]
