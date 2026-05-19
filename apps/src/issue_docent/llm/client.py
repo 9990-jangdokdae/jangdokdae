@@ -5,7 +5,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from apps.src.issue_docent.config import Settings, get_settings
+from apps.src.config import getenv
 from apps.src.repositories.issue_docent import ArticleForGeneration, ClusterGenerationContext
 from apps.src.issue_docent.llm.prompt_loader import load_prompt
 from apps.src.schemas.issue_docent_llm import (
@@ -15,14 +15,18 @@ from apps.src.schemas.issue_docent_llm import (
 )
 
 
-def create_main_llm(settings: Settings | None = None) -> ChatGoogleGenerativeAI:
-    settings = settings or get_settings()
+def create_main_llm() -> ChatGoogleGenerativeAI:
+    if not getenv.GOOGLE_CLOUD_PROJECT:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT 환경변수가 필요합니다.")
+
     return ChatGoogleGenerativeAI(
-        model=settings.main_model,
-        api_key=settings.google_genai_api_key,
-        thinking_level=settings.llm_thinking_level,
-        request_timeout=settings.llm_timeout_seconds,
-        retries=settings.llm_transport_max_retries,
+        model=getenv.MAIN_MODEL,
+        vertexai=True,
+        project=getenv.GOOGLE_CLOUD_PROJECT,
+        location=getenv.GOOGLE_CLOUD_LOCATION,
+        thinking_level=getenv.LLM_THINKING_LEVEL,
+        request_timeout=getenv.LLM_TIMEOUT_SECONDS,
+        retries=getenv.LLM_TRANSPORT_MAX_RETRIES,
     )
 
 
@@ -33,11 +37,10 @@ class IssueDocentLLMClient:
         *,
         structured_output_max_attempts: int | None = None,
     ) -> None:
-        settings = get_settings()
-        self.llm = llm or create_main_llm(settings)
+        self.llm = llm or create_main_llm()
         self.structured_output_max_attempts = max(
             1,
-            structured_output_max_attempts or settings.llm_transport_max_retries + 1,
+            structured_output_max_attempts or getenv.LLM_TRANSPORT_MAX_RETRIES + 1,
         )
 
     async def generate_article_brief(self, article: ArticleForGeneration) -> ArticleBriefOutput:
