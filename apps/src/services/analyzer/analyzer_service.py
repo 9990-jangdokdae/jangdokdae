@@ -105,6 +105,7 @@ class ClusterAnalyzerService:
             live_sidebar.related_markets,
             persisted.sidebar_context.related_markets,
         )
+        live_sidebar.key_metrics = persisted.sidebar_context.key_metrics
         return live_sidebar
 
     async def persist_analysis_from_db(
@@ -115,6 +116,11 @@ class ClusterAnalyzerService:
         """Gemini 분석을 수행하고 결과를 article_analysis 테이블에 저장한다."""
         generated = await asyncio.to_thread(self.analyze_cluster_from_db, cluster_id)
         refreshed_sidebar = await asyncio.to_thread(self.build_sidebar_context_from_db, cluster_id)
+        refreshed_sidebar.related_markets = self._merge_market_summaries(
+            refreshed_sidebar.related_markets,
+            generated.sidebar_context.related_markets,
+        )
+        refreshed_sidebar.key_metrics = generated.sidebar_context.key_metrics
         persisted_result = generated.model_copy(update={"sidebar_context": refreshed_sidebar})
         await repository.upsert_analysis_result(cluster_id=cluster_id, result=persisted_result)
         return persisted_result
@@ -126,12 +132,18 @@ class ClusterAnalyzerService:
     ) -> list[RelatedMarketCard]:
         summary_by_name = {market.name: market.summary for market in persisted_markets if market.name}
         merged: list[RelatedMarketCard] = []
+        seen_names: set[str] = set()
         for market in live_markets:
+            seen_names.add(market.name)
             merged.append(
                 market.model_copy(
                     update={"summary": market.summary or summary_by_name.get(market.name)}
                 )
             )
+        for market in persisted_markets:
+            if not market.name or market.name in seen_names:
+                continue
+            merged.append(market)
         return merged
 
 

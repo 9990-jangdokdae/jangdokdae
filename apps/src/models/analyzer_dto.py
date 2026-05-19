@@ -66,6 +66,30 @@ class AnalysisSection(BaseModel):
     summary: str
 
 
+class AnalysisSectionsResponse(BaseModel):
+    analysis_sections: list[AnalysisSection] = Field(default_factory=list)
+
+
+class SidebarMarketInsight(BaseModel):
+    name: str
+    summary: str
+
+
+class SidebarMetricInsight(BaseModel):
+    label: str
+    value: str
+    emphasis: str | None = None
+
+
+class SidebarInsightsResponse(BaseModel):
+    sidebar_markets: list[SidebarMarketInsight] = Field(default_factory=list)
+    sidebar_metrics: list[SidebarMetricInsight] = Field(default_factory=list)
+
+
+class SidebarMetricsResponse(BaseModel):
+    sidebar_metrics: list[SidebarMetricInsight] = Field(default_factory=list)
+
+
 class LLMAnalysisResponse(BaseModel):
     """Gemini가 직접 반환하는 1차 구조화 결과."""
     article_id: str
