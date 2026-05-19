@@ -58,8 +58,10 @@ class IssueDocentLLMClient:
         article_briefs: list[ArticleBriefOutput],
         content_plan: IssueDocentContentPlanOutput,
     ) -> IssueDocentContentOutput:
-        payload = _build_content_payload(cluster=cluster, article_briefs=article_briefs)
-        payload["content_plan"] = content_plan.model_dump()
+        payload = {
+            "cluster": _cluster_payload(cluster),
+            "content_plan": content_plan.model_dump(),
+        }
         return await self._structured_invoke(
             schema=IssueDocentContentOutput,
             prompt_name="cluster_summary.md",
@@ -125,16 +127,7 @@ def _build_content_payload(
     article_briefs: list[ArticleBriefOutput],
 ) -> dict[str, Any]:
     return {
-            "cluster": {
-                "cluster_id": cluster.cluster_id,
-                "run_date": cluster.run_date.isoformat(),
-                "cluster_seq": cluster.cluster_seq,
-                "size": cluster.size,
-                "is_singleton": cluster.is_singleton,
-                "company_names": cluster.company_names,
-                "sectors": cluster.sectors,
-                "keywords": cluster.keywords,
-            },
+            "cluster": _cluster_payload(cluster),
             "article_titles": [
                 {
                     "article_pk": article.article_pk,
@@ -147,7 +140,20 @@ def _build_content_payload(
                 for article in cluster.articles
             ],
             "article_briefs": [brief.model_dump() for brief in article_briefs],
-        }
+    }
+
+
+def _cluster_payload(cluster: ClusterGenerationContext) -> dict[str, Any]:
+    return {
+        "cluster_id": cluster.cluster_id,
+        "run_date": cluster.run_date.isoformat(),
+        "cluster_seq": cluster.cluster_seq,
+        "size": cluster.size,
+        "is_singleton": cluster.is_singleton,
+        "company_names": cluster.company_names,
+        "sectors": cluster.sectors,
+        "keywords": cluster.keywords,
+    }
 
 
 def _jsonable(value: Any) -> Any:

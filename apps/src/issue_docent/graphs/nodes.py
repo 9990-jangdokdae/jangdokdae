@@ -1,3 +1,4 @@
+from apps.src.issue_docent.article_selection import select_articles_for_deep_brief
 from apps.src.issue_docent.graphs.state import IssueDocentPersistPayload, IssueDocentState
 from apps.src.issue_docent.llm.client import IssueDocentLLMClient
 from apps.src.schemas.issue_docent_llm import QuizOutput
@@ -17,6 +18,16 @@ def make_article_brief_node(llm_client: IssueDocentLLMClient):
         return {"article_briefs": [brief]}
 
     return article_brief_node
+
+
+def make_article_briefs_node(llm_client: IssueDocentLLMClient):
+    async def article_briefs_node(state: IssueDocentState) -> dict:
+        briefs = []
+        for article in select_articles_for_deep_brief(state["cluster"].articles):
+            briefs.append(await llm_client.generate_article_brief(article))
+        return {"article_briefs": briefs}
+
+    return article_briefs_node
 
 
 def make_issue_docent_content_node(llm_client: IssueDocentLLMClient):

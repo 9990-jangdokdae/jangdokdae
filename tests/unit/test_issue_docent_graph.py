@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime
 
 import pytest
@@ -19,8 +20,17 @@ class FakeLLMClient:
         self.content_input_orders: list[int] = []
         self.quiz_summary: str | None = None
         self.quiz_term_candidates: list[dict] = []
+        self.active_article_brief_calls = 0
+        self.max_article_brief_concurrency = 0
 
     async def generate_article_brief(self, article: ArticleForGeneration) -> ArticleBriefOutput:
+        self.active_article_brief_calls += 1
+        self.max_article_brief_concurrency = max(
+            self.max_article_brief_concurrency,
+            self.active_article_brief_calls,
+        )
+        await asyncio.sleep(0)
+        self.active_article_brief_calls -= 1
         return ArticleBriefOutput(
             article_pk=article.article_pk,
             article_id=article.article_id,
@@ -129,6 +139,7 @@ async def test_issue_docent_graph_fans_out_article_briefs_and_builds_payload():
     result = await graph.ainvoke({"cluster": _cluster_context()})
 
     assert fake_llm.content_input_orders == [0, 1]
+    assert fake_llm.max_article_brief_concurrency == 1
     assert fake_llm.content_plan_issue == "첫 기사 중심 이슈"
     assert fake_llm.quiz_summary == "핵심 사건이 있었다."
     assert result["persist_payload"].cluster_id == 10
@@ -172,7 +183,31 @@ async def test_issue_docent_graph_uses_summary_terms_as_quiz_candidates():
     assert [quiz["kind"] for quiz in result["persist_payload"].quizzes] == ["term", "issue"]
 
 
-def _cluster_context() -> ClusterGenerationContext:
+@pytest.mark.asyncio
+async def test_issue_docent_graph_limits_article_briefs_to_representative_candidates():
+    fake_llm = FakeLLMClient()
+    graph = build_issue_docent_graph(fake_llm)
+
+    await graph.ainvoke({"cluster": _cluster_context(article_count=6)})
+
+    assert fake_llm.content_input_orders == [0, 1, 2, 3, 4]
+
+
+def _cluster_context(article_count: int = 2) -> ClusterGenerationContext:
+    articles = [
+        ArticleForGeneration(
+            article_pk=index + 1,
+            article_id=f"a{index + 1}",
+            article_order=index,
+            title="첫 기사" if index == 0 else f"{index + 1}번째 기사",
+            url=f"https://example.com/{index + 1}",
+            press="신문",
+            published_date=datetime(2026, 5, 14, 8, index),
+            content="기사 본문",
+            similarity_to_centroid=0.9 - (index * 0.05),
+        )
+        for index in range(article_count)
+    ]
     return ClusterGenerationContext(
         cluster_id=10,
         run_date=date(2026, 5, 14),
@@ -183,28 +218,5 @@ def _cluster_context() -> ClusterGenerationContext:
         company_names=["삼성전자"],
         sectors=["반도체"],
         keywords=["투자"],
-        articles=[
-            ArticleForGeneration(
-                article_pk=1,
-                article_id="a1",
-                article_order=0,
-                title="첫 기사",
-                url="https://example.com/1",
-                press="신문",
-                published_date=datetime(2026, 5, 14, 8, 0, 0),
-                content="첫 기사 본문",
-                similarity_to_centroid=0.9,
-            ),
-            ArticleForGeneration(
-                article_pk=2,
-                article_id="a2",
-                article_order=1,
-                title="둘째 기사",
-                url="https://example.com/2",
-                press="신문",
-                published_date=datetime(2026, 5, 14, 8, 1, 0),
-                content="둘째 기사 본문",
-                similarity_to_centroid=0.8,
-            ),
-        ],
+        articles=articles,
     )

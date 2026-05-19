@@ -82,6 +82,24 @@ def test_issue_docent_content_plan_rejects_unknown_paragraph_section():
         )
 
 
+def test_issue_docent_content_plan_limits_selected_articles_and_paragraph_facts():
+    with pytest.raises(ValidationError):
+        IssueDocentContentPlanOutput.model_validate(
+            {
+                "central_article_order": 0,
+                "central_issue": "한빛자산운용 ETF 순자산 증가",
+                "selected_article_orders": [0, 1, 2, 3],
+                "paragraphs": [
+                    {
+                        "section": "fact",
+                        "source_article_orders": [0],
+                        "facts": ["a", "b", "c", "d"],
+                    }
+                ],
+            }
+        )
+
+
 def test_issue_docent_content_output_accepts_title_teaser_and_summary_only():
     output = IssueDocentContentOutput.model_validate(
         {

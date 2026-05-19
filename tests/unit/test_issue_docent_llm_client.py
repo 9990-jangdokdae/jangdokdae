@@ -41,9 +41,10 @@ class FlakyStructuredLLM:
 
 
 class CapturingStructuredLLM:
-    def __init__(self) -> None:
+    def __init__(self, response: dict | None = None) -> None:
         self.schema = None
         self.messages = []
+        self.response = response
 
     def with_structured_output(self, schema):
         self.schema = schema
@@ -51,6 +52,8 @@ class CapturingStructuredLLM:
 
     async def ainvoke(self, messages):
         self.messages = messages
+        if self.response is not None:
+            return self.response
         return {
             "central_article_order": 0,
             "central_issue": "첫 기사 중심 이슈",
@@ -117,6 +120,67 @@ async def test_generate_content_plan_uses_structured_plan_schema_and_article_pay
     assert result.central_issue == "첫 기사 중심 이슈"
     assert '"article_order": 0' in llm.messages[1].content
     assert '"core_event": "첫 기사 중심 사건"' in llm.messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_generate_issue_docent_content_sends_only_content_plan_without_briefs():
+    llm = CapturingStructuredLLM(
+        response={
+            "title": "첫 기사 제목",
+            "teaser": "첫 기사 티저",
+            "summary": "첫 기사 본문",
+        }
+    )
+    client = IssueDocentLLMClient(llm=llm, structured_output_max_attempts=1)
+    selected_brief = ArticleBriefOutput(
+        article_pk=1,
+        article_id="article-1",
+        article_order=0,
+        brief="첫 기사 요약",
+        core_event="첫 기사 중심 사건",
+        key_numbers=[],
+        stated_background=[],
+        stated_market_reactions=[],
+        stated_interpretations=[],
+        low_priority_details=[],
+    )
+    omitted_brief = ArticleBriefOutput(
+        article_pk=2,
+        article_id="article-2",
+        article_order=1,
+        brief="둘째 기사 요약",
+        core_event="둘째 기사 중심 사건",
+        key_numbers=[],
+        stated_background=[],
+        stated_market_reactions=[],
+        stated_interpretations=[],
+        low_priority_details=[],
+    )
+
+    await client.generate_issue_docent_content(
+        cluster=_cluster_context(),
+        article_briefs=[selected_brief, omitted_brief],
+        content_plan=IssueDocentContentPlanOutput(
+            central_article_order=0,
+            central_issue="첫 기사 중심 이슈",
+            selected_article_orders=[0],
+            omitted_article_orders=[1],
+            paragraphs=[
+                {
+                    "section": "fact",
+                    "source_article_orders": [0],
+                    "facts": ["첫 기사 중심 사실"],
+                }
+            ],
+        ),
+    )
+
+    assert '"content_plan"' in llm.messages[1].content
+    assert '"central_issue": "첫 기사 중심 이슈"' in llm.messages[1].content
+    assert '"article_briefs"' not in llm.messages[1].content
+    assert '"첫 기사 중심 사건"' not in llm.messages[1].content
+    assert '"article_order": 1' not in llm.messages[1].content
+    assert "둘째 기사 중심 사건" not in llm.messages[1].content
 
 
 def test_create_main_llm_uses_vertex_with_main_model(monkeypatch):

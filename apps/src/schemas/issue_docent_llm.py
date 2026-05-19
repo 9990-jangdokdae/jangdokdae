@@ -19,13 +19,13 @@ class ArticleBriefOutput(BaseModel):
 class IssueDocentPlanParagraph(BaseModel):
     section: Literal["fact", "background", "market_reaction"]
     source_article_orders: list[int] = Field(min_length=1)
-    facts: list[str] = Field(min_length=1)
+    facts: list[str] = Field(min_length=1, max_length=3)
 
 
 class IssueDocentContentPlanOutput(BaseModel):
     central_article_order: int = Field(ge=0)
     central_issue: str = Field(min_length=1)
-    selected_article_orders: list[int] = Field(min_length=1)
+    selected_article_orders: list[int] = Field(min_length=1, max_length=3)
     omitted_article_orders: list[int] = Field(default_factory=list)
     paragraphs: list[IssueDocentPlanParagraph] = Field(min_length=1, max_length=3)
 

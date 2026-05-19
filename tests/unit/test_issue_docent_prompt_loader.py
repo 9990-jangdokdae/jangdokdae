@@ -21,6 +21,7 @@ def test_cluster_summary_prompt_generates_summary_content_only():
 
     assert "content_plan" in prompt
     assert "설계도에 없는 기사" in prompt
+    assert "탈환, 흥행, 급증, 눈앞" in prompt
     assert "`title`: 중심 기사에서 다루는 회사나 상품과 핵심 변화를 바탕으로" in prompt
     assert "`teaser`: 목록 카드용 짧은 소개" in prompt
     assert "`summary`: 상세 본문" in prompt
@@ -34,3 +35,5 @@ def test_content_plan_prompt_names_representative_article():
 
     assert "`article_order=0`을 대표 기사" in prompt
     assert "omitted_article_orders" in prompt
+    assert "같은 회사 기사라도 대표 기사와 다른 논점이면 제외한다" in prompt
+    assert "순위 경쟁이나 시장 전체 흐름으로 넓히지 않는다" in prompt
