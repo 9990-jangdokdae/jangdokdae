@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from apps.src.config import getenv
 from apps.src.models.analyzer_dto import (
     AnalysisSection,
+    AnalysisSectionsResponse,
     AnalysisRequest,
     AnalysisResponse,
     AnalysisSummary,
@@ -15,6 +16,8 @@ from apps.src.models.analyzer_dto import (
     LLMAnalysisResponse,
     RelatedCompanyCard,
     RelatedMarketCard,
+    SidebarInsightsResponse,
+    SidebarMetricsResponse,
     SidebarContext,
 )
 
@@ -31,11 +34,80 @@ SYSTEM_PROMPT = """너는 금융 뉴스 analyzer다.
 - 핵심 이슈와 요약 포인트는 반드시 기사 원문 근거가 있어야 한다.
 - summary는 짧은 제목이 아니라, 이 뉴스를 이해하는 데 필요한 사실/원인/시장 반응/해석/시사점을 담은 설명형 문단으로 작성한다.
 - summary_points와 evidence_sentences는 기사 원문에 있는 내용만 반영한다.
-- analysis_sections는 프론트 상세 페이지의 분석 블록이다. 3개 또는 4개로 작성하고, 번호를 붙이지 않는다.
+- summary와 analysis_sections의 모든 문장은 반드시 자연스러운 서술형 존댓말(~습니다/~입니다)로 작성한다.
+- 반말, 메모체, 단정적인 명령문을 쓰지 않는다.
+- analysis_sections는 프론트 상세 페이지의 분석 블록이다. 기본은 3개로 작성하고, 정말 필요한 경우에만 4개까지 허용한다. 번호를 붙이지 않는다.
+- analysis_sections의 기본 역할은 아래 3단계 흐름을 따른다.
+  1) 지금 무슨 변화가 있었는지
+  2) 왜 중요한지 / 시장이 무엇을 보는지
+  3) 지금 무엇을 더 확인해야 하는지
+- section title은 위 역할 설명을 그대로 옮긴 메타 문구가 아니라, 기사 주제에 맞는 자연스러운 소제목으로 작성한다.
+- "지금 무슨 변화가 있었는지", "왜 중요한지 / 시장이 무엇을 보는지", "지금 무엇을 더 확인해야 하는지"를 title로 그대로 쓰지 않는다.
 - analysis_sections의 각 section은 서로 역할이 달라야 하며, 같은 사실이나 같은 해석을 의미 없이 반복하지 않는다.
 - 중요한 사실이 여러 section에 필요하면 같은 말을 반복하지 말고, 각 section 역할에 맞게 의미를 달리해서 녹인다.
 - 직접적인 투자판단(매수/매도 권유, 목표가 제시)은 하지 않는다.
 - 기업/섹터/시장 데이터는 새 사실을 만들지 말고 기사 해석 보조용으로만 사용한다.
+- 기사 주제에 맞지 않는 섹터나 테마를 억지로 중심 주제로 끌어오지 않는다.
+- ETF 기사라면 ETF 시장, 자금 유입, 점유율 변화, 상품 경쟁력을 중심으로 해석한다.
+- 출력은 반드시 JSON만 반환한다.
+""".strip()
+
+
+SIDEBAR_SYSTEM_PROMPT = """너는 금융 뉴스 analyzer의 우측 사이드바만 작성하는 보조 모델이다.
+
+목표:
+대표 기사 본문과 메인 분석 결과를 함께 읽고,
+우측 사이드바에 들어갈 한마디 요약과 핵심 수치 카드를 JSON으로 만든다.
+
+중요:
+- sidebar_markets는 1개 또는 2개로 작성한다.
+- sidebar_markets의 summary는 단순 요약이 아니라, 겉으로 보이는 현상보다 무엇을 먼저 봐야 하는지까지 담은 짧고 단단한 한 줄 문장으로 쓴다.
+- sidebar_markets는 기사 핵심 이슈 기준으로 잡고, 키워드만 보고 섹터 이름을 기계적으로 고르지 않는다.
+- sidebar_metrics는 2개 또는 3개로 작성한다.
+- sidebar_metrics는 기사에서 실제로 언급된 수치만 사용하고, label/value/emphasis가 지금 기사 주제와 맞아야 한다.
+- sidebar_metrics는 첫 번째 숫자를 기계적으로 뽑지 말고, 기사 핵심 이슈를 설명하는 데 정말 중요한 숫자만 고른다.
+- sidebar_metrics는 서로 다른 의미의 숫자로 구성한다. 같은 수치를 이름만 바꿔 반복하지 않는다.
+- 빈 배열을 반환하지 않는다.
+- 출력은 반드시 JSON만 반환한다.
+""".strip()
+
+
+SIDEBAR_METRICS_SYSTEM_PROMPT = """너는 금융 뉴스 analyzer의 우측 사이드바 수치 카드만 작성하는 보조 모델이다.
+
+목표:
+대표 기사 본문과 메인 분석 결과를 읽고,
+기사 주제를 설명하는 데 꼭 필요한 수치 카드만 JSON으로 만든다.
+
+중요:
+- sidebar_metrics는 2개 또는 3개를 작성한다.
+- 기사에 실제 나온 숫자만 사용한다.
+- label/value/emphasis가 기사 핵심 이슈와 정확히 맞아야 한다.
+- 첫 번째 숫자를 기계적으로 뽑지 말고, 기사 핵심을 설명하는 숫자를 선택한다.
+- 같은 의미의 숫자를 중복해서 쓰지 않는다.
+- 아래에 제공되는 "수치 후보 문장" 안의 숫자만 사용한다.
+- 수치 후보 문장이 비어 있지 않다면, 후보 문장에 나온 숫자로만 sidebar_metrics를 작성한다.
+- 빈 배열을 반환하지 않는다.
+- 출력은 반드시 JSON만 반환한다.
+""".strip()
+
+
+ANALYSIS_SECTIONS_REPAIR_PROMPT = """너는 금융 뉴스 analyzer의 본문 분석 섹션만 다시 작성하는 보조 모델이다.
+
+목표:
+대표 기사 본문과 이미 생성된 요약을 바탕으로,
+프론트 상세에 들어갈 analysis_sections만 다시 JSON으로 만든다.
+
+중요:
+- analysis_sections는 반드시 3개를 작성한다.
+- 모든 문장은 자연스러운 서술형 존댓말(~습니다/~입니다)로 작성한다.
+- 각 섹션은 아래 3단계 역할을 정확히 따른다.
+  1) 지금 무슨 변화가 있었는지
+  2) 왜 중요한지 / 시장이 무엇을 보는지
+  3) 지금 무엇을 더 확인해야 하는지
+- section title은 위 역할 설명을 그대로 옮긴 메타 문구가 아니라, 기사 주제에 맞는 자연스러운 소제목으로 작성한다.
+- "지금 무슨 변화가 있었는지", "왜 중요한지 / 시장이 무엇을 보는지", "지금 무엇을 더 확인해야 하는지"를 title로 그대로 쓰지 않는다.
+- 기사 주제에 맞지 않는 섹터나 테마를 억지로 끌어오지 않는다.
+- 같은 사실을 반복하지 않는다.
 - 출력은 반드시 JSON만 반환한다.
 """.strip()
 
@@ -46,7 +118,8 @@ class IssueBasedAnalyzerService:
     def analyze(self, article: AnalysisRequest) -> AnalysisResponse:
         """LLM 1차 결과를 만들고, 프론트가 바로 쓰는 최종 응답으로 다시 묶는다."""
         result = self._analyze_with_langchain(article)
-        return self._finalize_response(article, result)
+        sidebar_result = self._analyze_sidebar_with_langchain(article, result)
+        return self._finalize_response(article, result, sidebar_result)
 
     def _analyze_with_langchain(self, article: AnalysisRequest) -> LLMAnalysisResponse:
         """LangChain structured output으로 Gemini 1차 결과를 받는다."""
@@ -55,7 +128,97 @@ class IssueBasedAnalyzerService:
         result = structured_llm.invoke(self._build_prompt(article))
         if not isinstance(result, LLMAnalysisResponse):
             result = LLMAnalysisResponse.model_validate(result)
+        if len(result.analysis_sections) < 3:
+            repaired_sections = self._repair_analysis_sections(article, result)
+            result = result.model_copy(update={"analysis_sections": repaired_sections.analysis_sections})
         return result
+
+    def _repair_analysis_sections(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> AnalysisSectionsResponse:
+        llm = self._build_langchain_model()
+        structured_llm = llm.with_structured_output(AnalysisSectionsResponse)
+        prompt = self._build_analysis_sections_repair_prompt(article, analysis_result)
+        result = structured_llm.invoke(prompt)
+        if not isinstance(result, AnalysisSectionsResponse):
+            result = AnalysisSectionsResponse.model_validate(result)
+        if len(result.analysis_sections) >= 3:
+            return result
+
+        raw_response = llm.invoke(prompt)
+        raw_content = getattr(raw_response, "content", raw_response)
+        if isinstance(raw_content, list):
+            raw_content = "\n".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in raw_content
+            )
+        parsed = self._parse_json_block(str(raw_content))
+        return AnalysisSectionsResponse.model_validate(parsed)
+
+    def _analyze_sidebar_with_langchain(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> SidebarInsightsResponse:
+        """메인 분석 결과를 바탕으로 사이드바 전용 한마디와 수치 카드를 다시 만든다."""
+        llm = self._build_langchain_model()
+        structured_llm = llm.with_structured_output(SidebarInsightsResponse)
+        result = structured_llm.invoke(self._build_sidebar_prompt(article, analysis_result))
+        if not isinstance(result, SidebarInsightsResponse):
+            result = SidebarInsightsResponse.model_validate(result)
+        if len(result.sidebar_markets) >= 1 and len(result.sidebar_metrics) >= 2:
+            return result
+
+        repaired = structured_llm.invoke(
+            self._build_sidebar_repair_prompt(article, analysis_result, result)
+        )
+        if not isinstance(repaired, SidebarInsightsResponse):
+            repaired = SidebarInsightsResponse.model_validate(repaired)
+
+        if len(repaired.sidebar_metrics) < 2:
+            metrics_only = self._analyze_sidebar_metrics_with_langchain(article, analysis_result)
+            repaired = repaired.model_copy(
+                update={"sidebar_metrics": metrics_only.sidebar_metrics}
+            )
+        return repaired
+
+    def _analyze_sidebar_metrics_with_langchain(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> SidebarMetricsResponse:
+        raw_result = self._analyze_sidebar_metrics_with_raw_json(article, analysis_result)
+        if len(raw_result.sidebar_metrics) >= 2:
+            return raw_result
+
+        llm = self._build_langchain_model()
+        structured_llm = llm.with_structured_output(SidebarMetricsResponse)
+        result = structured_llm.invoke(self._build_sidebar_metrics_prompt(article, analysis_result))
+        if not isinstance(result, SidebarMetricsResponse):
+            result = SidebarMetricsResponse.model_validate(result)
+        if len(result.sidebar_metrics) >= len(raw_result.sidebar_metrics):
+            return result
+        if len(raw_result.sidebar_metrics) >= len(result.sidebar_metrics):
+            return raw_result
+        return result
+
+    def _analyze_sidebar_metrics_with_raw_json(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> SidebarMetricsResponse:
+        llm = self._build_langchain_model()
+        raw_response = llm.invoke(self._build_sidebar_metrics_prompt(article, analysis_result))
+        raw_content = getattr(raw_response, "content", raw_response)
+        if isinstance(raw_content, list):
+            raw_content = "\n".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in raw_content
+            )
+        parsed = self._parse_json_block(str(raw_content))
+        return SidebarMetricsResponse.model_validate(parsed)
 
     def _build_langchain_model(self) -> object:
         """Vertex AI 환경에서 analyzer LLM을 만든다."""
@@ -100,16 +263,16 @@ class IssueBasedAnalyzerService:
             ],
             "analysis_sections": [
                 {
-                    "title": "기사 유형에 맞는 분석 제목 1",
-                    "summary": "2~4문장 이내의 짧은 분석 문단",
+                    "title": "ETF 시장 점유율 경쟁이 다시 뜨거워진 이유",
+                    "summary": "2~4문장 이내의 짧은 분석 문단입니다.",
                 },
                 {
-                    "title": "기사 유형에 맞는 분석 제목 2",
-                    "summary": "2~4문장 이내의 짧은 분석 문단",
+                    "title": "히트 상품이 실제 점유율 확대로 이어지는지",
+                    "summary": "2~4문장 이내의 짧은 분석 문단입니다.",
                 },
                 {
-                    "title": "주의할 점 또는 체크포인트",
-                    "summary": "중복 없이 다른 역할을 하는 분석 문단",
+                    "title": "지속 여부를 가를 다음 체크포인트",
+                    "summary": "중복 없이 다른 역할을 하는 분석 문단입니다.",
                 },
             ],
             "risk_factors": [
@@ -134,10 +297,243 @@ class IssueBasedAnalyzerService:
 {article.content}
 """
 
-    def _finalize_response(self, article: AnalysisRequest, result: LLMAnalysisResponse) -> AnalysisResponse:
+    def _build_sidebar_prompt(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> str:
+        analysis_payload = {
+            "summary": analysis_result.summary,
+            "summary_points": analysis_result.summary_points,
+            "analysis_sections": [section.model_dump() for section in analysis_result.analysis_sections],
+            "selected_issue_candidates": analysis_result.selected_issue_candidates,
+        }
+        example_output = {
+            "sidebar_markets": [
+                {
+                    "name": "ETF 시장",
+                    "summary": "단순 인기보다 자금 유입이 실제 점유율 확대로 이어지는지 보는 편이 더 중요합니다.",
+                }
+            ],
+            "sidebar_metrics": [
+                {
+                    "label": "시장 점유율 변화",
+                    "value": "7.03% → 7.11%",
+                    "emphasis": "+0.08%p 변화",
+                },
+                {
+                    "label": "연초 이후 순자산 증가율",
+                    "value": "58.81%",
+                    "emphasis": "기사 기준",
+                },
+                {
+                    "label": "ETF 순자산 총액",
+                    "value": "33조3149억원",
+                    "emphasis": "기사 기준",
+                },
+            ],
+        }
+
+        return f"""{SIDEBAR_SYSTEM_PROMPT}
+
+출력 형식:
+{json.dumps(example_output, ensure_ascii=False, indent=2)}
+
+기사 제목:
+{article.title or ""}
+
+기사 본문:
+{article.content}
+
+메인 분석 결과:
+{json.dumps(analysis_payload, ensure_ascii=False, indent=2)}
+"""
+
+    def _build_analysis_sections_repair_prompt(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> str:
+        payload = {
+            "summary": analysis_result.summary,
+            "summary_points": analysis_result.summary_points,
+            "selected_issue_candidates": analysis_result.selected_issue_candidates,
+            "issue_selection_reason": analysis_result.issue_selection_reason,
+        }
+        example_output = {
+            "analysis_sections": [
+                {
+                    "title": "ETF 시장 점유율 경쟁이 다시 뜨거워진 이유",
+                    "summary": "기사에서 실제로 어떤 변화가 나타났는지 2~4문장으로 설명합니다.",
+                },
+                {
+                    "title": "히트 상품이 실제 점유율 확대로 이어지는지",
+                    "summary": "이 변화가 왜 중요한지, 시장이 무엇을 중심으로 해석하는지 2~4문장으로 설명합니다.",
+                },
+                {
+                    "title": "지속 여부를 가를 다음 체크포인트",
+                    "summary": "지금 추가로 확인해야 할 변수나 체크포인트를 2~4문장으로 설명합니다.",
+                },
+            ]
+        }
+
+        return f"""{ANALYSIS_SECTIONS_REPAIR_PROMPT}
+
+출력 형식:
+{json.dumps(example_output, ensure_ascii=False, indent=2)}
+
+기사 제목:
+{article.title or ""}
+
+기사 본문:
+{article.content}
+
+이미 생성된 요약 정보:
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+"""
+
+    def _build_sidebar_repair_prompt(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+        previous_result: SidebarInsightsResponse,
+    ) -> str:
+        analysis_payload = {
+            "summary": analysis_result.summary,
+            "summary_points": analysis_result.summary_points,
+            "analysis_sections": [section.model_dump() for section in analysis_result.analysis_sections],
+            "selected_issue_candidates": analysis_result.selected_issue_candidates,
+        }
+        previous_payload = previous_result.model_dump()
+        numeric_candidates = self._collect_numeric_fact_candidates(article, analysis_result)
+
+        return f"""{SIDEBAR_SYSTEM_PROMPT}
+
+추가 지시:
+- 이전 응답에서 sidebar가 불완전했다.
+- 이번에는 sidebar_markets를 최소 1개, sidebar_metrics를 반드시 2개 또는 3개 작성한다.
+- sidebar_metrics는 기사에 실제 나온 숫자만 사용한다.
+- ETF 기사라면 점유율 변화, 순자산 증가율, ETF 순자산 총액처럼 기사 핵심을 설명하는 숫자를 우선한다.
+
+이전 응답:
+{json.dumps(previous_payload, ensure_ascii=False, indent=2)}
+
+기사 제목:
+{article.title or ""}
+
+기사 본문:
+{article.content}
+
+메인 분석 결과:
+{json.dumps(analysis_payload, ensure_ascii=False, indent=2)}
+
+수치 후보 문장:
+{json.dumps(numeric_candidates, ensure_ascii=False, indent=2)}
+"""
+
+    def _build_sidebar_metrics_prompt(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> str:
+        analysis_payload = {
+            "summary": analysis_result.summary,
+            "summary_points": analysis_result.summary_points,
+            "analysis_sections": [section.model_dump() for section in analysis_result.analysis_sections],
+            "evidence_sentences": analysis_result.evidence_sentences,
+        }
+        numeric_candidates = self._collect_numeric_fact_candidates(article, analysis_result)
+        example_output = {
+            "sidebar_metrics": [
+                {
+                    "label": "시장 점유율 변화",
+                    "value": "7.03% → 7.11%",
+                    "emphasis": "+0.08%p 변화",
+                },
+                {
+                    "label": "연초 이후 순자산 증가율",
+                    "value": "58.81%",
+                    "emphasis": "기사 기준",
+                },
+                {
+                    "label": "ETF 순자산 총액",
+                    "value": "33조3149억원",
+                    "emphasis": "기사 기준",
+                },
+            ]
+        }
+
+        return f"""{SIDEBAR_METRICS_SYSTEM_PROMPT}
+
+이번 응답에서는 기사 본문 전체보다 아래 "수치 후보 문장"을 우선적으로 사용한다.
+반드시 그 후보 안에 실제로 나온 숫자 중에서 2개 또는 3개를 골라 작성한다.
+
+출력 형식:
+{json.dumps(example_output, ensure_ascii=False, indent=2)}
+
+기사 제목:
+{article.title or ""}
+
+기사 본문:
+{article.content}
+
+메인 분석 결과:
+{json.dumps(analysis_payload, ensure_ascii=False, indent=2)}
+
+수치 후보 문장:
+{json.dumps(numeric_candidates, ensure_ascii=False, indent=2)}
+"""
+
+    def _parse_json_block(self, raw_text: str) -> dict:
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("LLM JSON 응답을 찾지 못했습니다.")
+
+        return json.loads(cleaned[start : end + 1])
+
+    def _collect_numeric_fact_candidates(
+        self,
+        article: AnalysisRequest,
+        analysis_result: LLMAnalysisResponse,
+    ) -> list[str]:
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        for text in [*analysis_result.evidence_sentences, *analysis_result.summary_points]:
+            normalized = str(text or "").strip()
+            if not normalized or normalized in seen or not re.search(r"\d", normalized):
+                continue
+            seen.add(normalized)
+            candidates.append(normalized)
+
+        for sentence in re.split(r"(?<=[.!?。])\s+|\n+", article.content):
+            normalized = str(sentence or "").strip()
+            if not normalized or normalized in seen or not re.search(r"\d", normalized):
+                continue
+            if len(normalized) < 12:
+                continue
+            seen.add(normalized)
+            candidates.append(normalized)
+            if len(candidates) >= 8:
+                break
+
+        return candidates[:8]
+
+    def _finalize_response(
+        self,
+        article: AnalysisRequest,
+        result: LLMAnalysisResponse,
+        sidebar_result: SidebarInsightsResponse,
+    ) -> AnalysisResponse:
         """LLM 1차 결과와 정형 sidebar를 묶어 최종 AnalysisResponse를 만든다."""
         analysis_summary = self._build_analysis_summary(article, result)
-        sidebar_context = self._build_sidebar_context(article)
+        sidebar_context = self._build_sidebar_context(article, sidebar_result)
         return AnalysisResponse(
             cluster_id=article.cluster_id,
             analysis_summary=analysis_summary,
@@ -187,6 +583,7 @@ class IssueBasedAnalyzerService:
     def _build_sidebar_context(
         self,
         article: AnalysisRequest,
+        sidebar_result: SidebarInsightsResponse | None = None,
     ) -> SidebarContext:
         """회사/시장/핵심 숫자를 우측 sidebar 카드 구조로 조립한다."""
         related_companies = [
@@ -217,32 +614,131 @@ class IssueBasedAnalyzerService:
             )
             for indicator in article.context.market_indicators
         ]
+        related_markets = self._merge_sidebar_market_insights(
+            related_markets,
+            self._normalize_sidebar_markets(article, sidebar_result),
+        )
         return SidebarContext(
             related_companies=related_companies,
             related_markets=related_markets,
-            key_metrics=self._build_sidebar_key_metrics(article),
+            key_metrics=self._build_sidebar_key_metrics(article, sidebar_result),
         )
 
-    def _build_sidebar_key_metrics(self, article: AnalysisRequest) -> list[KeyMetric]:
-        """기사 본문 숫자를 우선으로 고르고, 필요할 때만 비교 문구를 붙인다."""
-        primary_market = self._select_primary_market(article)
-        issue_type = self._classify_issue_type(article)
-        metrics = self._extract_article_key_metrics(
-            article,
-            issue_type=issue_type,
-            primary_market=primary_market,
+    def _normalize_sidebar_markets(
+        self,
+        article: AnalysisRequest,
+        result: SidebarInsightsResponse | None,
+    ) -> list[RelatedMarketCard]:
+        if result is None:
+            return []
+
+        fallback_name = self._guess_primary_market_name(article)
+        normalized: list[RelatedMarketCard] = []
+        seen_names: set[str] = set()
+
+        for market in result.sidebar_markets:
+            name = str(market.name or "").strip() or fallback_name
+            summary = str(market.summary or "").strip()
+            if not name or not summary or name in seen_names:
+                continue
+            seen_names.add(name)
+            normalized.append(
+                RelatedMarketCard(
+                    name=name,
+                    summary=summary,
+                )
+            )
+
+        return normalized[:2]
+
+    def _merge_sidebar_market_insights(
+        self,
+        base_markets: list[RelatedMarketCard],
+        llm_markets: list[RelatedMarketCard],
+    ) -> list[RelatedMarketCard]:
+        merged_by_name: dict[str, RelatedMarketCard] = {}
+        ordered_names: list[str] = []
+
+        for market in [*base_markets, *llm_markets]:
+            if not market.name:
+                continue
+            existing = merged_by_name.get(market.name)
+            if existing is None:
+                merged_by_name[market.name] = market
+                ordered_names.append(market.name)
+                continue
+            merged_by_name[market.name] = existing.model_copy(
+                update={
+                    "value": existing.value or market.value,
+                    "change_pct": existing.change_pct or market.change_pct,
+                    "summary": existing.summary or market.summary,
+                }
+            )
+
+        return [merged_by_name[name] for name in ordered_names]
+
+    def _guess_primary_market_name(self, article: AnalysisRequest) -> str | None:
+        joined_text = " ".join(
+            [
+                article.title or "",
+                article.content,
+                *article.metadata.sectors,
+                *article.metadata.keywords,
+            ]
         )
 
-        deduped: list[KeyMetric] = []
+        if "ETF" in joined_text.upper():
+            return "ETF 시장"
+        if "반도체" in joined_text:
+            return "반도체"
+        if "코스피" in joined_text:
+            return "KOSPI"
+        if "코스닥" in joined_text:
+            return "KOSDAQ"
+        if article.metadata.sectors:
+            return article.metadata.sectors[0]
+        if article.context.sectors:
+            return article.context.sectors[0].name
+        return None
+
+    def _build_sidebar_key_metrics(
+        self,
+        _article: AnalysisRequest,
+        result: SidebarInsightsResponse | None = None,
+    ) -> list[KeyMetric]:
+        """기사 핵심 숫자는 LLM이 기사 주제에 맞게 고른 값만 사용한다."""
+        llm_metrics = self._normalize_sidebar_metrics(result)
+        return llm_metrics
+
+    def _normalize_sidebar_metrics(
+        self,
+        result: SidebarInsightsResponse | None,
+    ) -> list[KeyMetric]:
+        if result is None:
+            return []
+
+        normalized: list[KeyMetric] = []
         seen: set[tuple[str, str]] = set()
-        for metric in metrics:
-            key = (metric.label.strip(), metric.value.strip())
+
+        for metric in result.sidebar_metrics:
+            label = str(metric.label or "").strip()
+            value = str(metric.value or "").strip()
+            emphasis = str(metric.emphasis or "").strip() or None
+            if not label or not value:
+                continue
+            key = (label, value)
             if key in seen:
                 continue
             seen.add(key)
-            deduped.append(metric)
+            normalized.append(
+                KeyMetric(
+                    label=label,
+                    value=value,
+                    emphasis=emphasis,
+                )
+            )
 
-        return deduped[:3]
+        return normalized[:3]
 
     def _classify_issue_type(self, article: AnalysisRequest) -> str:
         haystack = " ".join(
@@ -630,6 +1126,7 @@ class IssueBasedAnalyzerService:
             suffix = " 전망"
         if "누적" in sentence:
             prefix = f"{prefix}누적 "
+
         return f"{prefix}{label}{suffix}".strip()
 
     def _extract_growth_hint(self, sentence: str) -> str | None:
