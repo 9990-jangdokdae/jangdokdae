@@ -55,3 +55,8 @@ async def get_db() -> AsyncSession:  # type: ignore[return]
     """FastAPI Depends용 DB 세션 의존성."""
     async with _get_api_session_factory()() as session:
         yield session
+
+
+def get_api_session_factory() -> async_sessionmaker[AsyncSession]:
+    """startup 이벤트 등 Depends 밖에서 세션 팩토리가 필요할 때 사용."""
+    return _get_api_session_factory()
