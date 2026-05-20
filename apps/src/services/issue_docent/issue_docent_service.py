@@ -4,6 +4,8 @@ from apps.src.schemas.issue_docent import (
     IssueDocentListItem,
     IssueDocentListResponse,
     IssueDocentQuiz,
+    IssueDocentSearchSuggestion,
+    IssueDocentSearchSuggestionsResponse,
     MatchedTerm,
     SourceArticle,
     SummaryContent,
@@ -24,8 +26,18 @@ class IssueDocentReadService:
     def __init__(self, repository: IssueDocentRepository) -> None:
         self.repository = repository
 
-    async def list_issue_docents(self, *, limit: int, offset: int) -> IssueDocentListResponse:
-        records, total = await self.repository.list_issue_docents(limit=limit, offset=offset)
+    async def list_issue_docents(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        search_query: str | None = None,
+    ) -> IssueDocentListResponse:
+        records, total = await self.repository.list_issue_docents(
+            limit=limit,
+            offset=offset,
+            search_query=search_query,
+        )
         candidates = await self.repository.get_company_master_candidates(
             _unique_company_names(records)
         )
@@ -77,6 +89,23 @@ class IssueDocentReadService:
             ],
             quizzes=[IssueDocentQuiz.model_validate(quiz) for quiz in record.quizzes],
             created_at=record.created_at,
+        )
+
+    async def search_suggestions(
+        self,
+        *,
+        search_query: str,
+        limit: int,
+    ) -> IssueDocentSearchSuggestionsResponse:
+        records = await self.repository.search_suggestions(
+            search_query=search_query,
+            limit=limit,
+        )
+        return IssueDocentSearchSuggestionsResponse(
+            suggestions=[
+                IssueDocentSearchSuggestion.model_validate(record, from_attributes=True)
+                for record in records
+            ]
         )
 
     async def _get_stock_terms(self) -> list[StockTermForMatch]:

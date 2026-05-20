@@ -67,6 +67,16 @@ class IssueDocentListResponse(BaseModel):
     offset: int
 
 
+class IssueDocentSearchSuggestion(BaseModel):
+    type: Literal["issue", "company", "sector"]
+    label: str
+    query: str
+
+
+class IssueDocentSearchSuggestionsResponse(BaseModel):
+    suggestions: list[IssueDocentSearchSuggestion]
+
+
 class IssueDocentDetailResponse(BaseModel):
     id: int
     cluster_id: int
