@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -39,6 +39,13 @@ class IssueDocentListRecord:
 class IssueDocentDetailRecord(IssueDocentListRecord):
     summary: str
     quizzes: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class IssueDocentSearchSuggestionRecord:
+    type: Literal["issue", "company", "sector"]
+    label: str
+    query: str
 
 
 @dataclass(frozen=True)
@@ -170,14 +177,26 @@ class IssueDocentRepository:
         *,
         limit: int,
         offset: int,
+        search_query: str | None = None,
     ) -> tuple[list[IssueDocentListRecord], int]:
-        total = await self.session.scalar(select(func.count()).select_from(IssueDocent))
-        stmt = (
-            _issue_docent_base_select()
-            .order_by(IssueDocent.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        search_filter = _issue_docent_search_filter(search_query)
+        total_stmt = select(func.count()).select_from(IssueDocent)
+        stmt = _issue_docent_base_select()
+
+        if search_filter is not None:
+            total_stmt = (
+                select(func.count(IssueDocent.id.distinct()))
+                .select_from(IssueDocent)
+                .outerjoin(
+                    EntityExtraction,
+                    EntityExtraction.cluster_id == IssueDocent.cluster_id,
+                )
+                .where(search_filter)
+            )
+            stmt = stmt.where(search_filter)
+
+        total = await self.session.scalar(total_stmt)
+        stmt = stmt.order_by(IssueDocent.created_at.desc()).limit(limit).offset(offset)
         rows = (await self.session.execute(stmt)).all()
         return [_list_record_from_row(row) for row in rows], int(total or 0)
 
@@ -189,6 +208,72 @@ class IssueDocentRepository:
         if row is None:
             return None
         return _detail_record_from_row(row)
+
+    async def search_suggestions(
+        self,
+        *,
+        search_query: str,
+        limit: int,
+    ) -> list[IssueDocentSearchSuggestionRecord]:
+        needle = f"%{search_query}%"
+        per_type_limit = max(limit, 1)
+
+        issue_stmt = (
+            select(
+                IssueDocent.title.label("label"),
+                func.max(IssueDocent.created_at).label("latest_created_at"),
+            )
+            .where(IssueDocent.title.ilike(needle))
+            .group_by(IssueDocent.title)
+            .order_by(func.max(IssueDocent.created_at).desc())
+            .limit(per_type_limit)
+        )
+        company_stmt = _array_suggestion_stmt(
+            EntityExtraction.company_names,
+            needle,
+            per_type_limit,
+        )
+        sector_stmt = _array_suggestion_stmt(
+            EntityExtraction.sectors,
+            needle,
+            per_type_limit,
+        )
+
+        issue_rows = (await self.session.execute(issue_stmt)).all()
+        company_rows = (await self.session.execute(company_stmt)).all()
+        sector_rows = (await self.session.execute(sector_stmt)).all()
+
+        return _dedupe_suggestions(
+            [
+                *[
+                    IssueDocentSearchSuggestionRecord(
+                        type="company",
+                        label=row.label,
+                        query=row.label,
+                    )
+                    for row in company_rows
+                    if row.label
+                ],
+                *[
+                    IssueDocentSearchSuggestionRecord(
+                        type="sector",
+                        label=row.label,
+                        query=row.label,
+                    )
+                    for row in sector_rows
+                    if row.label
+                ],
+                *[
+                    IssueDocentSearchSuggestionRecord(
+                        type="issue",
+                        label=row.label,
+                        query=row.label,
+                    )
+                    for row in issue_rows
+                    if row.label
+                ],
+            ]
+        )[:limit]
 
     async def get_source_articles(self, cluster_id: int) -> list[SourceArticleRecord]:
         stmt = (
@@ -286,6 +371,43 @@ def _issue_docent_base_select(*extra_columns: Any) -> Select[tuple[Any, ...]]:
             *extra_columns,
         )
     )
+
+
+def _issue_docent_search_filter(search_query: str | None):
+    if not search_query:
+        return None
+
+    needle = f"%{search_query}%"
+    return or_(
+        IssueDocent.title.ilike(needle),
+        func.array_to_string(EntityExtraction.company_names, " ").ilike(needle),
+        func.array_to_string(EntityExtraction.sectors, " ").ilike(needle),
+    )
+
+
+def _array_suggestion_stmt(array_column: Any, needle: str, limit: int) -> Select[tuple[Any]]:
+    labels = select(func.unnest(array_column).label("label")).subquery()
+    return (
+        select(labels.c.label)
+        .where(labels.c.label.ilike(needle))
+        .group_by(labels.c.label)
+        .order_by(labels.c.label.asc())
+        .limit(limit)
+    )
+
+
+def _dedupe_suggestions(
+    suggestions: list[IssueDocentSearchSuggestionRecord],
+) -> list[IssueDocentSearchSuggestionRecord]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[IssueDocentSearchSuggestionRecord] = []
+    for suggestion in suggestions:
+        key = (suggestion.type, suggestion.query)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(suggestion)
+    return deduped
 
 
 def _list_record_from_row(row: Any) -> IssueDocentListRecord:

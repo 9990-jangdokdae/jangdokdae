@@ -9,6 +9,8 @@ from apps.src.schemas.issue_docent import (
     IssueDocentListItem,
     IssueDocentListResponse,
     IssueDocentQuiz,
+    IssueDocentSearchSuggestion,
+    IssueDocentSearchSuggestionsResponse,
     MatchedTerm,
     SectorCompanies,
     SectorCompany,
@@ -19,7 +21,17 @@ from apps.src.schemas.issue_docent import (
 
 
 class FakeIssueDocentService:
-    async def list_issue_docents(self, *, limit: int, offset: int) -> IssueDocentListResponse:
+    last_search_query: str | None = None
+    last_suggestion_query: str | None = None
+
+    async def list_issue_docents(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        search_query: str | None = None,
+    ) -> IssueDocentListResponse:
+        FakeIssueDocentService.last_search_query = search_query
         return IssueDocentListResponse(
             items=[
                 IssueDocentListItem(
@@ -116,8 +128,29 @@ class FakeIssueDocentService:
             created_at=datetime(2026, 5, 14, 9, 0, 0),
         )
 
+    async def search_suggestions(
+        self,
+        *,
+        search_query: str,
+        limit: int,
+    ) -> IssueDocentSearchSuggestionsResponse:
+        FakeIssueDocentService.last_suggestion_query = search_query
+        return IssueDocentSearchSuggestionsResponse(
+            suggestions=[
+                IssueDocentSearchSuggestion(type="company", label="삼성전자", query="삼성전자"),
+                IssueDocentSearchSuggestion(type="sector", label="전기·전자", query="전기·전자"),
+                IssueDocentSearchSuggestion(
+                    type="issue",
+                    label="삼성전자 반도체 투자 확대",
+                    query="삼성전자 반도체 투자 확대",
+                ),
+            ][:limit]
+        )
+
 
 def make_client() -> TestClient:
+    FakeIssueDocentService.last_search_query = None
+    FakeIssueDocentService.last_suggestion_query = None
     app = create_app()
     app.dependency_overrides[get_issue_docent_service] = lambda: FakeIssueDocentService()
     return TestClient(app)
@@ -143,6 +176,38 @@ def test_list_issue_docents_uses_sector_companies_only():
     assert item["sector_companies"][0]["companies"][0]["name"] == "삼성전자"
     assert "company_names" not in item
     assert "sectors" not in item
+
+
+def test_list_issue_docents_accepts_trimmed_search_query():
+    response = make_client().get("/api/v1/contents/issue-docent?q=%20삼성전자%20")
+
+    assert response.status_code == 200
+    assert FakeIssueDocentService.last_search_query == "삼성전자"
+
+
+def test_list_issue_docents_treats_blank_search_query_as_none():
+    response = make_client().get("/api/v1/contents/issue-docent?q=%20%20")
+
+    assert response.status_code == 200
+    assert FakeIssueDocentService.last_search_query is None
+
+
+def test_search_suggestions_accepts_trimmed_query():
+    response = make_client().get("/api/v1/contents/issue-docent/search-suggestions?q=%20삼성%20")
+
+    assert response.status_code == 200
+    assert FakeIssueDocentService.last_suggestion_query == "삼성"
+    assert response.json()["suggestions"][0] == {
+        "type": "company",
+        "label": "삼성전자",
+        "query": "삼성전자",
+    }
+
+
+def test_search_suggestions_requires_non_blank_query():
+    response = make_client().get("/api/v1/contents/issue-docent/search-suggestions?q=%20%20")
+
+    assert response.status_code == 422
 
 
 def test_get_issue_docent_includes_articles_and_matched_terms():

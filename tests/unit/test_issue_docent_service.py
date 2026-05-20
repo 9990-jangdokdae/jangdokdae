@@ -5,6 +5,7 @@ import pytest
 from apps.src.repositories.issue_docent import (
     IssueDocentDetailRecord,
     IssueDocentListRecord,
+    IssueDocentSearchSuggestionRecord,
     SourceArticleRecord,
 )
 from apps.src.services.issue_docent.issue_docent_service import (
@@ -17,8 +18,17 @@ from apps.src.services.issue_docent.sector_companies import CompanyMasterCandida
 class FakeIssueDocentRepository:
     def __init__(self) -> None:
         self.requested_company_names: list[list[str]] = []
+        self.requested_search_queries: list[str | None] = []
+        self.requested_suggestion_queries: list[tuple[str, int]] = []
 
-    async def list_issue_docents(self, *, limit: int, offset: int):
+    async def list_issue_docents(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        search_query: str | None = None,
+    ):
+        self.requested_search_queries.append(search_query)
         return (
             [
                 IssueDocentListRecord(
@@ -48,6 +58,16 @@ class FakeIssueDocentRepository:
             created_at=datetime(2026, 5, 14, 9, 0, 0),
             quizzes=[],
         )
+
+    async def search_suggestions(self, *, search_query: str, limit: int):
+        self.requested_suggestion_queries.append((search_query, limit))
+        return [
+            IssueDocentSearchSuggestionRecord(
+                type="company",
+                label="삼성전자",
+                query="삼성전자",
+            )
+        ]
 
     async def get_company_master_candidates(self, company_names: list[str]):
         self.requested_company_names.append(company_names)
@@ -93,6 +113,28 @@ async def test_list_issue_docents_builds_sector_companies_once_per_request():
     assert repository.requested_company_names == [["삼성전자", "미등록회사"]]
     assert response.items[0].sector_companies[0].sector == "전기·전자"
     assert response.items[0].sector_companies[1].sector is None
+
+
+@pytest.mark.asyncio
+async def test_list_issue_docents_passes_search_query_to_repository():
+    repository = FakeIssueDocentRepository()
+    service = IssueDocentReadService(repository)
+
+    await service.list_issue_docents(limit=20, offset=0, search_query="삼성전자")
+
+    assert repository.requested_search_queries == ["삼성전자"]
+
+
+@pytest.mark.asyncio
+async def test_search_suggestions_passes_query_and_limit_to_repository():
+    repository = FakeIssueDocentRepository()
+    service = IssueDocentReadService(repository)
+
+    response = await service.search_suggestions(search_query="삼성", limit=5)
+
+    assert repository.requested_suggestion_queries == [("삼성", 5)]
+    assert response.suggestions[0].type == "company"
+    assert response.suggestions[0].label == "삼성전자"
 
 
 @pytest.mark.asyncio
